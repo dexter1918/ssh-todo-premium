@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Nimbus — a premium desktop To-Do and Notes workspace." />
+  <title>Nimbus · Tasks & Notes</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☁️</text></svg>" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- ============================ APP SHELL ============================ -->
+  <div id="app" class="app">
+
+    <!-- ============================ LEFT SIDEBAR ============================ -->
+    <aside id="sidebar" class="sidebar" aria-label="Navigation">
+      <div class="sidebar-inner">
+
+        <!-- Logo + collapse -->
+        <header class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22"><path d="M7 18a5 5 0 0 1-1-9.9A6 6 0 0 1 18 8.5 4.5 4.5 0 0 1 17.5 18H7Z" fill="currentColor"/></svg>
+          </div>
+          <div class="brand-text">
+            <span class="brand-name">Nimbus</span>
+            <span class="brand-sub">Tasks &amp; Notes</span>
+          </div>
+          <button class="icon-btn collapse-btn" id="collapseBtn" title="Collapse sidebar" aria-label="Collapse sidebar">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M14 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </header>
+
+        <!-- User profile -->
+        <button class="profile" id="profileBtn" title="Account">
+          <span class="avatar" id="avatar">S</span>
+          <span class="profile-meta">
+            <span class="profile-name" id="profileName">Salman Haider</span>
+            <span class="profile-role">Pro workspace</span>
+          </span>
+          <span class="profile-streak" id="profileStreak" title="Current streak">🔥 0</span>
+        </button>
+
+        <!-- Search -->
+        <div class="search-wrap">
+          <svg class="search-icon" viewBox="0 0 24 24" width="16" height="16"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M21 21l-4.3-4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <input type="search" id="searchInput" class="search-input" placeholder="Search everything…" aria-label="Search" autocomplete="off" />
+          <kbd class="search-kbd">⌘K</kbd>
+        </div>
+
+        <nav class="sidebar-scroll" id="sidebarScroll">
+          <!-- Smart lists -->
+          <section class="nav-section">
+            <div class="nav-head"><span>Smart Lists</span></div>
+            <ul class="nav-list" id="smartLists"></ul>
+          </section>
+
+          <!-- Custom lists / folders -->
+          <section class="nav-section">
+            <div class="nav-head">
+              <span>Folders</span>
+              <button class="icon-btn tiny" id="addFolderBtn" title="New folder" aria-label="New folder">
+                <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              </button>
+            </div>
+            <ul class="nav-list" id="folderList"></ul>
+          </section>
+
+          <!-- Tags -->
+          <section class="nav-section">
+            <div class="nav-head"><span>Tags</span></div>
+            <div class="tag-cloud" id="tagCloud"></div>
+          </section>
+
+          <!-- Productivity summary -->
+          <section class="nav-section">
+            <div class="nav-head"><span>Today's Progress</span></div>
+            <div class="mini-summary" id="miniSummary">
+              <div class="mini-ring">
+                <svg viewBox="0 0 36 36" width="58" height="58">
+                  <circle class="ring-bg" cx="18" cy="18" r="15.9" />
+                  <circle class="ring-fg" id="miniRing" cx="18" cy="18" r="15.9" />
+                </svg>
+                <span class="mini-ring-label" id="miniRingLabel">0%</span>
+              </div>
+              <div class="mini-stats">
+                <div class="mini-stat"><b id="statDone">0</b><span>Done</span></div>
+                <div class="mini-stat"><b id="statPending">0</b><span>Pending</span></div>
+              </div>
+            </div>
+          </section>
+        </nav>
+
+        <!-- Footer / settings -->
+        <footer class="sidebar-footer">
+          <button class="ghost-btn" id="themeQuick" title="Toggle theme">
+            <svg class="ic-sun" viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="4" fill="currentColor"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></g></svg>
+            <span>Theme</span>
+          </button>
+          <button class="ghost-btn" id="settingsBtn" title="Settings">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M19.4 13a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+            <span>Settings</span>
+          </button>
+        </footer>
+      </div>
+      <div class="sidebar-resizer" id="sidebarResizer" title="Drag to resize"></div>
+    </aside>
+
+    <!-- ============================ MIDDLE PANE ============================ -->
+    <section id="listPane" class="list-pane" aria-label="Task list">
+      <header class="pane-head">
+        <button class="icon-btn show-sidebar" id="showSidebarBtn" title="Show sidebar" aria-label="Show sidebar">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M3 5h18M3 12h18M3 19h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+        <div class="pane-title-wrap">
+          <span class="pane-emoji" id="listEmoji">🗂️</span>
+          <h1 class="pane-title" id="listTitle">All Tasks</h1>
+          <span class="pane-count" id="listCount">0</span>
+        </div>
+        <div class="pane-actions">
+          <div class="view-switch" id="viewSwitch" role="tablist" aria-label="Views">
+            <button data-view="list" class="view-btn active" title="List view" role="tab">☰</button>
+            <button data-view="board" class="view-btn" title="Kanban board" role="tab">▤</button>
+            <button data-view="calendar" class="view-btn" title="Calendar" role="tab">▦</button>
+            <button data-view="timeline" class="view-btn" title="Timeline" role="tab">⊞</button>
+            <button data-view="dashboard" class="view-btn" title="Dashboard" role="tab">📊</button>
+          </div>
+          <button class="icon-btn" id="sortBtn" title="Sort">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M3 6h13M3 12h9M3 18h5M18 9l3 3 3-3M21 12V4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+          </button>
+          <button class="icon-btn" id="filterBtn" title="Filter">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M3 5h18l-7 8v5l-4 2v-7L3 5Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+            <span class="filter-dot" id="filterDot" hidden></span>
+          </button>
+        </div>
+      </header>
+
+      <!-- New task / quick add -->
+      <div class="quick-add" id="quickAdd">
+        <button class="qa-check" id="qaPriority" title="Priority"></button>
+        <input type="text" id="quickAddInput" class="qa-input" placeholder="Add a task…  (try “Pay rent !high #finance tomorrow 5pm”)" aria-label="Add a task" />
+        <button class="qa-submit" id="qaSubmit" title="Add task (Enter)">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+
+      <!-- Bulk action bar -->
+      <div class="bulk-bar" id="bulkBar" hidden>
+        <span class="bulk-count"><b id="bulkCount">0</b> selected</span>
+        <div class="bulk-actions">
+          <button data-bulk="complete" class="bulk-btn">✓ Complete</button>
+          <button data-bulk="star" class="bulk-btn">★ Star</button>
+          <button data-bulk="archive" class="bulk-btn">📥 Archive</button>
+          <button data-bulk="delete" class="bulk-btn danger">🗑 Delete</button>
+          <button data-bulk="clear" class="bulk-btn ghost">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Active filter chips -->
+      <div class="filter-chips" id="filterChips" hidden></div>
+
+      <!-- The scroll viewport for tasks / views -->
+      <div class="list-scroll" id="listScroll" tabindex="0">
+        <div id="viewList" class="view-pane"></div>
+        <div id="viewBoard" class="view-pane" hidden></div>
+        <div id="viewCalendar" class="view-pane" hidden></div>
+        <div id="viewTimeline" class="view-pane" hidden></div>
+        <div id="viewDashboard" class="view-pane" hidden></div>
+      </div>
+      <div class="list-resizer" id="listResizer" title="Drag to resize · double-click to reset"></div>
+    </section>
+
+    <!-- ============================ RIGHT PANE ============================ -->
+    <section id="detailPane" class="detail-pane" aria-label="Task details">
+      <div class="detail-empty" id="detailEmpty">
+        <div class="empty-art">📝</div>
+        <h2>Select a task</h2>
+        <p>Choose a task to view its notes, subtasks, reminders and activity — or press <kbd>Ctrl</kbd> <kbd>N</kbd> to create one.</p>
+      </div>
+
+      <div class="detail-content" id="detailContent" hidden>
+        <header class="detail-head">
+          <div class="detail-head-left">
+            <button class="detail-check" id="detailCheck" title="Complete (Space)" aria-label="Complete task"></button>
+            <input type="text" id="detailTitle" class="detail-title" placeholder="Untitled task" />
+          </div>
+          <div class="detail-head-actions">
+            <button class="icon-btn" id="detailStar" title="Star">☆</button>
+            <button class="icon-btn" id="detailPin" title="Pin">📌</button>
+            <button class="icon-btn" id="detailMore" title="More">⋯</button>
+            <button class="icon-btn" id="detailClose" title="Close">✕</button>
+          </div>
+        </header>
+
+        <div class="detail-scroll">
+          <!-- Metadata grid -->
+          <div class="meta-grid">
+            <label class="meta-cell">
+              <span class="meta-label">Priority</span>
+              <select id="metaPriority" class="meta-select">
+                <option value="none">None</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+            <label class="meta-cell">
+              <span class="meta-label">Status</span>
+              <select id="metaStatus" class="meta-select">
+                <option value="todo">To Do</option>
+                <option value="inprogress">In Progress</option>
+                <option value="waiting">Waiting</option>
+                <option value="done">Completed</option>
+              </select>
+            </label>
+            <label class="meta-cell">
+              <span class="meta-label">Due date</span>
+              <input type="date" id="metaDate" class="meta-input" />
+            </label>
+            <label class="meta-cell">
+              <span class="meta-label">Time</span>
+              <input type="time" id="metaTime" class="meta-input" />
+            </label>
+            <label class="meta-cell">
+              <span class="meta-label">Reminder</span>
+              <select id="metaReminder" class="meta-select">
+                <option value="">None</option>
+                <option value="at">At time</option>
+                <option value="10">10 min before</option>
+                <option value="60">1 hour before</option>
+                <option value="1440">1 day before</option>
+              </select>
+            </label>
+            <label class="meta-cell">
+              <span class="meta-label">Repeat</span>
+              <select id="metaRepeat" class="meta-select">
+                <option value="">Never</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
+              </select>
+            </label>
+            <label class="meta-cell">
+              <span class="meta-label">Folder</span>
+              <select id="metaFolder" class="meta-select"></select>
+            </label>
+            <div class="meta-cell">
+              <span class="meta-label">Tags</span>
+              <div class="tag-edit" id="metaTags">
+                <input type="text" id="tagInput" class="tag-input" placeholder="Add tag…" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Subtasks -->
+          <section class="detail-block">
+            <div class="block-head">
+              <h3>Subtasks</h3>
+              <span class="subtask-progress" id="subtaskProgress"></span>
+            </div>
+            <div class="subtask-track"><div class="subtask-fill" id="subtaskFill"></div></div>
+            <ul class="subtask-list" id="subtaskList"></ul>
+            <div class="subtask-add">
+              <input type="text" id="subtaskInput" class="subtask-input" placeholder="Add a subtask…" />
+            </div>
+          </section>
+
+          <!-- Rich notes editor -->
+          <section class="detail-block">
+            <div class="block-head"><h3>Notes</h3><span class="autosave-pill" id="autosavePill">Saved</span></div>
+            <div class="editor-toolbar" id="editorToolbar">
+              <button data-cmd="formatBlock" data-val="h1" title="Heading 1"><b>H1</b></button>
+              <button data-cmd="formatBlock" data-val="h2" title="Heading 2"><b>H2</b></button>
+              <button data-cmd="formatBlock" data-val="h3" title="Heading 3"><b>H3</b></button>
+              <span class="tb-sep"></span>
+              <button data-cmd="bold" title="Bold"><b>B</b></button>
+              <button data-cmd="italic" title="Italic"><i>I</i></button>
+              <button data-cmd="underline" title="Underline"><u>U</u></button>
+              <button data-cmd="strikeThrough" title="Strikethrough"><s>S</s></button>
+              <button data-cmd="inlineCode" title="Inline code">&lt;/&gt;</button>
+              <span class="tb-sep"></span>
+              <button data-cmd="insertUnorderedList" title="Bullet list">•</button>
+              <button data-cmd="insertOrderedList" title="Numbered list">1.</button>
+              <button data-cmd="checkList" title="Checklist">☑</button>
+              <span class="tb-sep"></span>
+              <button data-cmd="formatBlock" data-val="blockquote" title="Quote">❝</button>
+              <button data-cmd="codeBlock" title="Code block">{ }</button>
+              <button data-cmd="createLink" title="Link">🔗</button>
+              <button data-cmd="insertHorizontalRule" title="Divider">―</button>
+            </div>
+            <div class="editor" id="editor" contenteditable="true" spellcheck="true" data-placeholder="Start writing… notes auto-save as you type."></div>
+          </section>
+
+          <!-- Reminder / activity / comments -->
+          <div class="detail-columns">
+            <section class="detail-block">
+              <div class="block-head"><h3>Activity</h3></div>
+              <ul class="timeline" id="activityTimeline"></ul>
+            </section>
+            <section class="detail-block">
+              <div class="block-head"><h3>Comments</h3></div>
+              <ul class="comment-list" id="commentList"></ul>
+              <div class="comment-add">
+                <input type="text" id="commentInput" class="comment-input" placeholder="Write a comment…" />
+                <button id="commentSend" class="comment-send">Send</button>
+              </div>
+            </section>
+          </div>
+
+          <footer class="detail-foot" id="detailFoot"></footer>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ============================ OVERLAYS ============================ -->
+
+  <!-- Toasts -->
+  <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+
+  <!-- Context menu -->
+  <div class="context-menu" id="contextMenu" hidden role="menu"></div>
+
+  <!-- Popover (sort / filter) -->
+  <div class="popover" id="popover" hidden></div>
+
+  <!-- Command palette -->
+  <div class="overlay" id="paletteOverlay" hidden>
+    <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette">
+      <div class="palette-head">
+        <svg viewBox="0 0 24 24" width="18" height="18"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M21 21l-4.3-4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <input type="text" id="paletteInput" class="palette-input" placeholder="Type a command or search…" />
+        <kbd>Esc</kbd>
+      </div>
+      <ul class="palette-list" id="paletteList"></ul>
+    </div>
+  </div>
+
+  <!-- Settings modal -->
+  <div class="overlay" id="settingsOverlay" hidden>
+    <div class="modal settings-modal" role="dialog" aria-modal="true" aria-label="Settings">
+      <header class="modal-head">
+        <h2>Settings</h2>
+        <button class="icon-btn" data-close-modal title="Close">✕</button>
+      </header>
+      <div class="modal-body">
+        <div class="setting-row">
+          <div><h4>App name</h4><p>Rename your workspace. Leave blank to reset to “Nimbus”.</p></div>
+          <input type="text" id="settingAppName" class="meta-input" style="max-width:200px" placeholder="Nimbus" maxlength="32" />
+        </div>
+        <div class="setting-row">
+          <div><h4>Appearance</h4><p>Choose your color theme.</p></div>
+          <div class="seg" id="themeSeg">
+            <button data-theme-set="light">Light</button>
+            <button data-theme-set="dark">Dark</button>
+            <button data-theme-set="system">System</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div><h4>Accent color</h4><p>Personalize the highlight color.</p></div>
+          <div class="accent-row" id="accentRow"></div>
+        </div>
+        <div class="setting-row">
+          <div><h4>Display name</h4><p>Shown in your profile.</p></div>
+          <input type="text" id="settingName" class="meta-input" style="max-width:200px" />
+        </div>
+        <div class="setting-row">
+          <div><h4>Notifications</h4><p>Reminders &amp; due-task alerts.</p></div>
+          <button class="btn" id="enableNotif">Enable</button>
+        </div>
+        <div class="setting-row">
+          <div><h4>Data</h4><p>Export, import or reset your workspace.</p></div>
+          <div class="btn-group">
+            <button class="btn" id="exportBtn">Export</button>
+            <button class="btn" id="importBtn">Import</button>
+            <button class="btn danger" id="resetBtn">Reset</button>
+            <input type="file" id="importFile" accept="application/json" hidden />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div><h4>Keyboard shortcuts</h4><p>Work faster with the keyboard.</p></div>
+          <button class="btn" id="shortcutsBtn">View cheat sheet</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shortcuts cheat sheet -->
+  <div class="overlay" id="shortcutsOverlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+      <header class="modal-head"><h2>Keyboard Shortcuts</h2><button class="icon-btn" data-close-modal>✕</button></header>
+      <div class="modal-body shortcuts-grid" id="shortcutsGrid"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
