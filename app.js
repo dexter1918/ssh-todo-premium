@@ -18,7 +18,10 @@ const escapeHtml = (s = '') => s.replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function debounce(fn, wait = 200) {
-  let t; return function (...a) { clearTimeout(t); t = setTimeout(() => fn.apply(this, a), wait); };
+  let t;
+  const wrapped = function (...a) { clearTimeout(t); t = setTimeout(() => fn.apply(this, a), wait); };
+  wrapped.cancel = () => clearTimeout(t);
+  return wrapped;
 }
 function throttle(fn, wait = 60) {
   let last = 0, queued; return function (...a) {
@@ -165,16 +168,25 @@ function load() {
 }
 
 /* save(): LocalStorage is only a disposable cache for instant startup.
-   The source of truth is Neon — every save also queues a cloud push. */
-const save = debounce(() => {
+   The source of truth is Neon — every save also queues a cloud push.
+   `savePending` is set synchronously so sync polls can never slip into
+   the debounce window and adopt remote state over in-flight edits. */
+let savePending = false;
+const _cacheWrite = () => {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     localStorage.setItem(VERSION_KEY, String(remoteVersion));
+    localStorage.setItem(DIRTY_KEY, '1'); // cleared on successful push
   } catch (e) { /* cache write failure is non-fatal — Neon is the real store */ }
+};
+const _saveDebounced = debounce(() => {
+  savePending = false;
+  _cacheWrite();
   flashSaved();
   syncDirty = true;
   schedulePush();
 }, 250);
+function save() { savePending = true; _saveDebounced(); }
 
 /* ------------------------------------------------------------------ *
  *  1b. Cloud persistence — Neon Postgres over SQL-per-HTTPS
@@ -183,9 +195,10 @@ const save = debounce(() => {
  *  does not allow it (the body is still JSON text).
  * ------------------------------------------------------------------ */
 const VERSION_KEY = 'nimbus.v1.version';
+const DIRTY_KEY = 'nimbus.v1.dirty'; // survives tab close: unpushed edits exist
 const WORKSPACE_ID = 'default';
 const NEON_URL = 'https://ep-floral-silence-aq649dvc-pooler.c-8.us-east-1.aws.neon.tech/sql';
-const NEON_CONN = 'postgresql://neondb_owner:npg_wEeUlLaNP92K@ep-floral-silence-aq649dvc-pooler.c-8.us-east-1.aws.neon.tech/neondb?sslmode=require';
+const NEON_CONN = 'postgresql://neondb_owner:npg_4HpuQNDlAg8M@ep-floral-silence-aq649dvc-pooler.c-8.us-east-1.aws.neon.tech/neondb?sslmode=require';
 
 let remoteVersion = 0;    // version of the remote row our state is based on
 let syncDirty = false;    // local changes not yet pushed
@@ -193,6 +206,7 @@ let syncInFlight = false;
 let syncReady = false;    // blocks pushes until the initial pull settles
 let syncRetryTimer = null;
 let bootWasSeeded = false; // this boot generated demo data (safe to replace)
+let overwriteAuthorized = false; // user explicitly chose "keep this device's data"
 
 async function neonQuery(query, params = []) {
   const res = await fetch(NEON_URL, {
@@ -206,9 +220,27 @@ async function neonQuery(query, params = []) {
 
 const schedulePush = debounce(() => { pushToRemote(); }, 800);
 
+/* 4xx from Neon = bad credentials/config, not a flaky network. Retrying
+   cannot help; surface it clearly instead of pretending to be offline. */
+let authErrorToasted = false;
+function isAuthError(e) { return /Neon HTTP 4\d\d/.test(String(e && e.message)); }
+function reportSyncError(e) {
+  if (isAuthError(e)) {
+    setSyncStatus('autherror');
+    if (!authErrorToasted) {
+      authErrorToasted = true;
+      toast('Neon rejected the connection — update the connection string in app.js', 'error');
+    }
+    return true; // do not schedule retries
+  }
+  setSyncStatus('offline');
+  return false;
+}
+
 async function pushToRemote() {
   if (!syncReady || syncInFlight || !syncDirty) return;
   syncInFlight = true; setSyncStatus('syncing');
+  let pushSucceeded = false;
   try {
     const payload = JSON.stringify(state);
     let r = await neonQuery(
@@ -219,6 +251,14 @@ async function pushToRemote() {
       const cur = await neonQuery('SELECT version FROM workspace WHERE id=$1', [WORKSPACE_ID]);
       if (!cur.rows.length) {
         r = await neonQuery('INSERT INTO workspace (id, data, version) VALUES ($1, $2::jsonb, 1) RETURNING version', [WORKSPACE_ID, payload]);
+      } else if (remoteVersion === 0 && !overwriteAuthorized) {
+        // This device has NEVER seen the cloud state (e.g. its boot sync
+        // failed) yet the cloud has data. Overwriting blind could destroy a
+        // real workspace with a fresh demo seed — reconcile instead.
+        syncInFlight = false;
+        setSyncStatus('syncing');
+        await syncFromRemote(true); // adopts the cloud, or asks the user
+        return;
       } else {
         // Version conflict: another session wrote meanwhile. The active
         // editor's intent wins; stale sessions catch up via polling.
@@ -226,21 +266,38 @@ async function pushToRemote() {
       }
     }
     remoteVersion = +r.rows[0].version;
-    try { localStorage.setItem(VERSION_KEY, String(remoteVersion)); } catch (e) {}
+    try {
+      localStorage.setItem(VERSION_KEY, String(remoteVersion));
+      localStorage.removeItem(DIRTY_KEY); // everything local is now in Neon
+    } catch (e) {}
     syncDirty = false;
+    pushSucceeded = true;
+    overwriteAuthorized = false; // one-shot consent, consumed by this push
     setSyncStatus('synced');
   } catch (e) {
-    setSyncStatus('offline');
-    clearTimeout(syncRetryTimer);
-    syncRetryTimer = setTimeout(() => { if (syncDirty) pushToRemote(); }, 15000);
+    const fatal = reportSyncError(e);
+    if (!fatal) {
+      clearTimeout(syncRetryTimer);
+      syncRetryTimer = setTimeout(() => { if (syncDirty) pushToRemote(); }, 15000);
+    }
   } finally {
     syncInFlight = false;
-    if (syncDirty && syncReady) schedulePush(); // changes made while pushing
+    // Reschedule only after a SUCCESSFUL push (edits arrived mid-flight).
+    // After a failure the 15s backoff owns the retry — rescheduling here
+    // would hammer Neon in a ~1s hot loop for as long as the failure lasts.
+    if (pushSucceeded && syncDirty && syncReady) schedulePush();
   }
 }
 
 async function syncFromRemote(initial = false) {
-  if (syncInFlight || (syncDirty && !initial)) return; // never clobber pending edits
+  if (syncInFlight) return;
+  if (!initial) {
+    // Capture any keystrokes still sitting in the detail pane, then refuse
+    // to pull while local edits are pending or a save debounce is running —
+    // a poll must never adopt remote state over in-flight edits.
+    flushDetailEdits();
+    if (syncDirty || savePending) return;
+  }
   try {
     // Step 1 — version-only probe (a few bytes of egress, nothing more).
     const vr = await neonQuery('SELECT version FROM workspace WHERE id=$1', [WORKSPACE_ID]);
@@ -256,6 +313,13 @@ async function syncFromRemote(initial = false) {
         if (initial) toast('Workspace uploaded to Neon ☁️', 'success');
       }
     } else if (+vr.rows[0].version !== remoteVersion) {
+      // Boot with unpushed local edits (tab was closed before the push
+      // fired): keep local — the active editor's intent wins, same as the
+      // live conflict policy. The finally block pushes it up.
+      if (initial && syncDirty && remoteVersion > 0) {
+        setSyncStatus('syncing');
+        return;
+      }
       // First-ever sync on a device that already holds real (non-demo) data
       // while the cloud also has data: never discard either side silently.
       if (initial && remoteVersion === 0 && !bootWasSeeded && state.tasks.length) {
@@ -266,6 +330,7 @@ async function syncFromRemote(initial = false) {
         );
         if (!useCloud) {
           syncDirty = true; // push local up; version-conflict path overwrites
+          overwriteAuthorized = true; // explicit user consent for the overwrite
           setSyncStatus('syncing');
           return;
         }
@@ -278,17 +343,22 @@ async function syncFromRemote(initial = false) {
         state = Object.assign(defaultState(), data);
         state.settings = Object.assign(defaultState().settings, data.settings);
         remoteVersion = +r.rows[0].version; syncDirty = false;
+        // any save queued for the PRE-adoption state is now meaningless —
+        // cancel it or it re-pushes identical data as a pointless version bump
+        savePending = false; _saveDebounced.cancel();
         try {
           localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
           localStorage.setItem(VERSION_KEY, String(remoteVersion));
+          localStorage.removeItem(DIRTY_KEY);
         } catch (e) {}
+        hideContextMenu(); hidePopover(); // their targets no longer exist
         applyAll();
         if (!initial) toast('Updated from another session', 'info');
       }
     }
     setSyncStatus('synced');
   } catch (e) {
-    setSyncStatus('offline');
+    reportSyncError(e);
   } finally {
     if (initial) {
       syncReady = true;
@@ -303,11 +373,14 @@ function setSyncStatus(s) {
     syncing: ['Syncing…', 'syncing'],
     synced: ['Synced', 'synced'],
     offline: ['Offline', 'offline'],
+    autherror: ['Sync error', 'offline'],
   };
   const [label, cls] = map[s] || map.synced;
   chip.querySelector('.sync-label').textContent = label;
   chip.className = 'sync-chip ' + cls;
-  chip.title = s === 'offline' ? 'Cannot reach Neon — changes are kept locally and retried automatically' : 'Cloud sync: ' + label;
+  chip.title = s === 'offline' ? 'Cannot reach Neon — changes are kept locally and retried automatically'
+    : s === 'autherror' ? 'Neon rejected the credentials — update NEON_CONN in app.js'
+    : 'Cloud sync: ' + label;
 }
 
 /* ----- undo / redo ----- */
@@ -1112,7 +1185,7 @@ function flushDetailEdits() {
   let changed = false;
   if (t.title !== title) { t.title = title; changed = true; }
   if (t.notes !== notes) { t.notes = notes; changed = true; }
-  if (changed) { touch(t); save(); }
+  if (changed) { touch(t); syncDirty = true; save(); } // dirty NOW: pulls must back off immediately
 }
 function openTask(id) {
   flushDetailEdits();
@@ -2241,6 +2314,9 @@ function applyAll() {
 function init() {
   load();
   remoteVersion = +(localStorage.getItem(VERSION_KEY) || 0);
+  // A previous session ended with edits that never reached Neon — treat
+  // them as pending so the boot sync pushes instead of adopting over them.
+  syncDirty = localStorage.getItem(DIRTY_KEY) === '1';
   wire();
   applyAll();
   // reminder loop
@@ -2255,11 +2331,33 @@ function init() {
   document.addEventListener('visibilitychange', pollTick);
   window.addEventListener('focus', pollTick);
   window.addEventListener('online', () => { if (syncDirty) pushToRemote(); else pollTick(); });
+  // Tab is closing: capture un-debounced keystrokes and write the cache
+  // synchronously. The network push is best-effort and STRICTLY version-
+  // checked: a page whose initial sync never settled, or whose base version
+  // is stale, must never blind-write over the cloud. If the push loses,
+  // DIRTY_KEY makes the next boot reconcile and re-push safely.
+  window.addEventListener('pagehide', () => {
+    flushDetailEdits();
+    if (!savePending && !syncDirty) return;
+    savePending = false; syncDirty = true;
+    _cacheWrite();
+    if (!syncReady || remoteVersion === 0) return; // never confirmed cloud state: cache only
+    try {
+      fetch(NEON_URL, {
+        method: 'POST', keepalive: true,
+        headers: { 'Neon-Connection-String': NEON_CONN },
+        body: JSON.stringify({
+          query: 'UPDATE workspace SET data=$1::jsonb, version=version+1, updated_at=now() WHERE id=$2 AND version=$3',
+          params: [JSON.stringify(state), WORKSPACE_ID, remoteVersion],
+        }),
+      });
+    } catch (e) {}
+  });
   // re-render dashboard on resize for canvas crispness
   window.addEventListener('resize', debounce(() => { if (state.settings.view === 'dashboard') renderDashboard(); }, 250));
   // expose for debugging (getter: `state` is reassigned by import/reset)
   window.Nimbus = { get state() { return state; }, save, renderAll,
-    _sync: { push: pushToRemote, pull: syncFromRemote, query: neonQuery, status: () => ({ remoteVersion, syncDirty, syncReady, inFlight: syncInFlight }), _setVer: (v) => { remoteVersion = v; } } };
+    _sync: { push: pushToRemote, pull: syncFromRemote, query: neonQuery, status: () => ({ remoteVersion, syncDirty, syncReady, savePending, inFlight: syncInFlight }), _setVer: (v) => { remoteVersion = v; } } };
   console.log('%cNimbus ready ☁️', 'color:#6366f1;font-weight:700;font-size:14px');
 }
 
