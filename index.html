@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="Nimbus — a premium desktop To-Do and Notes workspace." />
   <title>Nimbus · Tasks & Notes</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☁️</text></svg>" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%236366f1'/%3E%3Cstop offset='1' stop-color='%23a855f7'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='24' height='24' rx='5.5' fill='url(%23g)'/%3E%3Cpath d='M7 17.5a4.5 4.5 0 0 1-.9-8.9A5.5 5.5 0 0 1 16.9 9a4.1 4.1 0 0 1-.6 8.5H7Z' fill='%23fff'/%3E%3Cpath d='M9.4 13l1.9 1.9 3.4-3.9' fill='none' stroke='%236d5ef0' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -120,6 +120,7 @@
           <span class="pane-count" id="listCount">0</span>
         </div>
         <div class="pane-actions">
+          <button class="btn danger empty-trash-btn" id="emptyTrashBtn" hidden>🗑 Empty Trash</button>
           <div class="view-switch" id="viewSwitch" role="tablist" aria-label="Views">
             <button data-view="list" class="view-btn active" title="List view" role="tab">☰</button>
             <button data-view="board" class="view-btn" title="Kanban board" role="tab">▤</button>
@@ -290,6 +291,21 @@
               <button data-cmd="codeBlock" title="Code block">{ }</button>
               <button data-cmd="createLink" title="Link">🔗</button>
               <button data-cmd="insertHorizontalRule" title="Divider">―</button>
+              <span class="tb-sep"></span>
+              <span class="tb-color-wrap">
+                <button data-cmd="colorPicker" title="Text color"><span class="color-a">A</span></button>
+                <div class="color-pop" id="colorPop" hidden>
+                  <button data-cmd="foreColor" data-val="__default" class="swatch-default" title="Default">A</button>
+                  <button data-cmd="foreColor" data-val="#ef4444" style="background:#ef4444" title="Red"></button>
+                  <button data-cmd="foreColor" data-val="#f59e0b" style="background:#f59e0b" title="Amber"></button>
+                  <button data-cmd="foreColor" data-val="#22c55e" style="background:#22c55e" title="Green"></button>
+                  <button data-cmd="foreColor" data-val="#14b8a6" style="background:#14b8a6" title="Teal"></button>
+                  <button data-cmd="foreColor" data-val="#3b82f6" style="background:#3b82f6" title="Blue"></button>
+                  <button data-cmd="foreColor" data-val="#8b5cf6" style="background:#8b5cf6" title="Violet"></button>
+                  <button data-cmd="foreColor" data-val="#ec4899" style="background:#ec4899" title="Pink"></button>
+                </div>
+              </span>
+              <button data-cmd="formatPainter" title="Format painter — copy formatting, then select target text">🖌️</button>
             </div>
             <div class="editor" id="editor" contenteditable="true" spellcheck="true" data-placeholder="Start writing… notes auto-save as you type."></div>
           </section>

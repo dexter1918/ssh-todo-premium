@@ -745,6 +745,7 @@ function renderHeader() {
   $('listTitle').textContent = title;
   $('listEmoji').textContent = emoji;
   $('listCount').textContent = currentTasks().length;
+  $('emptyTrashBtn').hidden = !(cur === 'trash' && state.tasks.some((t) => t.trashed));
   $$('.view-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === state.settings.view));
   renderFilterChips();
 }
@@ -1363,6 +1364,10 @@ function selectionInsideEditor() {
 }
 function execEditor(cmd, val) {
   const ed = editorEl();
+  // UI-only commands: leave the selection and document untouched
+  if (cmd === 'colorPicker') { const p = $('colorPop'); p.hidden = !p.hidden; return; }
+  if (cmd === 'formatPainter') { painterActive ? cancelPainter() : armPainter(); return; }
+
   ed.focus();
   // If the selection isn't inside the editor (e.g. nothing was ever placed), put caret at the end.
   if (!selectionInsideEditor()) placeCaretEnd(ed);
@@ -1372,10 +1377,52 @@ function execEditor(cmd, val) {
   else if (cmd === 'checkList') { insertCheckList(); }
   else if (cmd === 'createLink') { insertLink(); }
   else if (cmd === 'formatBlock') { toggleBlock(val); }
+  else if (cmd === 'foreColor') {
+    const v = val === '__default'
+      ? (getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#1a1d28')
+      : val;
+    document.execCommand('foreColor', false, v);
+    hideColorPop();
+  }
   else { document.execCommand(cmd, false, val || null); }
 
   saveNotes();
   updateToolbarState();
+}
+
+/* ----- text color popover + format painter ----- */
+let painterActive = false, painterFmt = null;
+function hideColorPop() { const p = $('colorPop'); if (p) p.hidden = true; }
+function armPainter() {
+  if (!selectionInsideEditor()) { toast('Click into formatted text first, then the painter', 'info'); return; }
+  painterFmt = {
+    bold: document.queryCommandState('bold'),
+    italic: document.queryCommandState('italic'),
+    underline: document.queryCommandState('underline'),
+    strikeThrough: document.queryCommandState('strikeThrough'),
+    color: document.queryCommandValue('foreColor'),
+    code: !!ancestorTag('CODE'),
+  };
+  painterActive = true;
+  editorEl().classList.add('painting');
+  updateToolbarState();
+}
+function cancelPainter() {
+  painterActive = false;
+  editorEl().classList.remove('painting');
+  updateToolbarState();
+}
+function applyPainter() {
+  const f = painterFmt;
+  if (!f) { cancelPainter(); return; }
+  ['bold', 'italic', 'underline', 'strikeThrough'].forEach((c) => {
+    let cur = false; try { cur = document.queryCommandState(c); } catch (e) {}
+    if (cur !== f[c]) document.execCommand(c, false, null);
+  });
+  if (f.color) document.execCommand('foreColor', false, f.color);
+  if (!!ancestorTag('CODE') !== f.code) toggleInlineCode();
+  cancelPainter();
+  saveNotes();
 }
 function placeCaretEnd(el) {
   const r = document.createRange(); r.selectNodeContents(el); r.collapse(false);
@@ -1447,7 +1494,12 @@ function insertCheckList() {
   } else { editorEl().appendChild(ul); }
 }
 function updateToolbarState() {
-  if (!selectionInsideEditor()) { $$('#editorToolbar button').forEach((b) => b.classList.remove('active')); return; }
+  const painterBtn = document.querySelector('#editorToolbar button[data-cmd="formatPainter"]');
+  if (!selectionInsideEditor()) {
+    $$('#editorToolbar button').forEach((b) => b.classList.remove('active'));
+    if (painterBtn) painterBtn.classList.toggle('active', painterActive);
+    return;
+  }
   const block = currentBlock();
   const inCode = !!ancestorTag('CODE');
   const inLink = !!ancestorTag('A');
@@ -1460,6 +1512,7 @@ function updateToolbarState() {
       else if (c === 'codeBlock') on = block === 'pre';
       else if (c === 'inlineCode') on = inCode;
       else if (c === 'createLink') on = inLink;
+      else if (c === 'formatPainter') on = painterActive;
     } catch (e) {}
     b.classList.toggle('active', on);
   });
@@ -1968,6 +2021,19 @@ function wire() {
   const onSearch = debounce(() => { ui.search = $('searchInput').value.trim(); renderHeader(); renderView(); }, 180);
   $('searchInput').addEventListener('input', onSearch);
 
+  /* empty trash */
+  $('emptyTrashBtn').addEventListener('click', () => {
+    const n = state.tasks.filter((t) => t.trashed).length;
+    if (!n) return;
+    if (!confirm(`Permanently delete ${n} task${n > 1 ? 's' : ''} in Trash? (Ctrl+Z can undo)`)) return;
+    pushHistory();
+    state.tasks = state.tasks.filter((t) => !t.trashed);
+    ui.multi.clear();
+    if (detailTask && !taskById(detailTask.id)) closeDetail();
+    save(); renderAll();
+    toast(`Trash emptied — ${n} task${n > 1 ? 's' : ''} permanently deleted`, 'info');
+  });
+
   /* view switch */
   $('viewSwitch').addEventListener('click', (e) => { const b = e.target.closest('.view-btn'); if (b) setView(b.dataset.view); });
   $('sortBtn').addEventListener('click', (e) => { hidePopover(); showSortPopover(e.currentTarget); });
@@ -2070,6 +2136,7 @@ function wire() {
   document.addEventListener('click', (e) => {
     if (!e.target.closest('#contextMenu')) hideContextMenu();
     if (!e.target.closest('#popover') && !e.target.closest('#sortBtn') && !e.target.closest('#filterBtn')) hidePopover();
+    if (!e.target.closest('.tb-color-wrap')) hideColorPop();
     const rip = e.target.closest('.icon-btn, .btn, .qa-submit, .view-btn, .comment-send');
     if (rip) ripple(e, rip);
   });
@@ -2139,7 +2206,13 @@ function wire() {
   $('editorToolbar').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) execEditor(b.dataset.cmd, b.dataset.val); });
   $('editor').addEventListener('input', () => { saveNotes(); });
   $('editor').addEventListener('keyup', updateToolbarState);
-  $('editor').addEventListener('mouseup', updateToolbarState);
+  $('editor').addEventListener('mouseup', () => {
+    if (painterActive) {
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && selectionInsideEditor()) { applyPainter(); return; }
+    }
+    updateToolbarState();
+  });
   $('editor').addEventListener('click', (e) => {
     const li = e.target.closest('ul[data-type="check"] > li');
     if (li && e.offsetX < 24) { li.classList.toggle('done'); saveNotes(); }
@@ -2253,6 +2326,8 @@ function onKeydown(e) {
   if (mod && e.key.toLowerCase() === 'd') { if (typing) return; e.preventDefault(); if (ui.selected) duplicateTask(ui.selected); return; }
 
   if (e.key === 'Escape') {
+    if (!$('colorPop').hidden) return hideColorPop();
+    if (painterActive) return cancelPainter();
     if (!$('paletteOverlay').hidden) return closePalette();
     if (!$('settingsOverlay').hidden) return closeOverlay($('settingsOverlay'));
     if (!$('shortcutsOverlay').hidden) return closeOverlay($('shortcutsOverlay'));

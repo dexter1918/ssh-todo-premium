@@ -302,6 +302,7 @@ h1, h2, h3, h4 { margin: 0; font-weight: 700; letter-spacing: -0.01em; }
 .pane-title { font-size: 21px; font-weight: 800; letter-spacing: -0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pane-count { font-size: 12px; font-weight: 700; color: var(--text-3); background: var(--hover); padding: 2px 9px; border-radius: 20px; }
 .pane-actions { display: flex; align-items: center; gap: 4px; }
+.empty-trash-btn { padding: 6px 12px; font-size: 12.5px; white-space: nowrap; margin-right: 4px; }
 
 .view-switch { display: flex; gap: 2px; padding: 3px; background: var(--hover); border-radius: 11px; margin-right: 4px; }
 .view-btn { width: 30px; height: 28px; border-radius: 8px; font-size: 14px; color: var(--text-3); transition: all 0.18s var(--ease); }
@@ -563,6 +564,19 @@ select option, select optgroup {
 .editor-toolbar button:hover { background: var(--hover); color: var(--text); }
 .editor-toolbar button.active { background: var(--accent-soft); color: var(--accent); }
 .tb-sep { width: 1px; background: var(--hairline); margin: 4px 4px; }
+.tb-color-wrap { position: relative; display: inline-flex; }
+.color-a { font-weight: 800; background: linear-gradient(90deg, #ef4444, #f59e0b, #22c55e, #3b82f6, #8b5cf6) bottom / 100% 3px no-repeat; padding-bottom: 2px; }
+.color-pop {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 20;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; padding: 7px;
+  background: var(--surface-solid); border: 1px solid var(--hairline); border-radius: 11px;
+  box-shadow: var(--shadow-pop); animation: popIn 0.15s var(--ease-spring);
+}
+.color-pop button { width: 24px; height: 24px; min-width: 24px; border-radius: 7px; border: 1px solid var(--hairline); padding: 0; transition: transform 0.12s var(--ease-spring); }
+.color-pop button:hover { transform: scale(1.15); }
+.color-pop .swatch-default { background: var(--surface-solid); color: var(--text); font-size: 12px; font-weight: 800; }
+.editor.painting { cursor: cell; }
+.editor.painting::selection, .editor.painting *::selection { background: rgba(var(--accent-rgb), 0.25); }
 .editor {
   min-height: 180px; padding: 16px; border: 1px solid var(--hairline); border-top: none;
   border-radius: 0 0 12px 12px; background: var(--input-bg); outline: none; line-height: 1.7; font-size: 14.5px;
