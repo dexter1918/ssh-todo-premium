@@ -241,10 +241,10 @@ async function pushToRemote() {
 
 async function syncFromRemote(initial = false) {
   if (syncInFlight || (syncDirty && !initial)) return; // never clobber pending edits
-  if (!initial) setSyncStatus('syncing');
   try {
-    const r = await neonQuery('SELECT data, version FROM workspace WHERE id=$1', [WORKSPACE_ID]);
-    if (!r.rows.length) {
+    // Step 1 — version-only probe (a few bytes of egress, nothing more).
+    const vr = await neonQuery('SELECT version FROM workspace WHERE id=$1', [WORKSPACE_ID]);
+    if (!vr.rows.length) {
       // Empty database: first ever run — migrate whatever we have locally.
       const ins = await neonQuery(
         'INSERT INTO workspace (id, data, version) VALUES ($1, $2::jsonb, 1) ON CONFLICT (id) DO NOTHING RETURNING version',
@@ -255,31 +255,32 @@ async function syncFromRemote(initial = false) {
         try { localStorage.setItem(VERSION_KEY, '1'); } catch (e) {}
         if (initial) toast('Workspace uploaded to Neon ☁️', 'success');
       }
-    } else {
-      const v = +r.rows[0].version;
-      if (v !== remoteVersion) {
-        // First-ever sync on a device that already holds real (non-demo) data
-        // while the cloud also has data: never discard either side silently.
-        if (initial && remoteVersion === 0 && !bootWasSeeded && state.tasks.length) {
-          const useCloud = confirm(
-            'A cloud workspace already exists in Neon.\n\n' +
-            'OK — load the CLOUD data (replaces this device’s local data)\n' +
-            'Cancel — keep THIS DEVICE’s data and overwrite the cloud'
-          );
-          if (!useCloud) {
-            syncDirty = true; // push local up; version-conflict path overwrites
-            setSyncStatus('syncing');
-            return;
-          }
+    } else if (+vr.rows[0].version !== remoteVersion) {
+      // First-ever sync on a device that already holds real (non-demo) data
+      // while the cloud also has data: never discard either side silently.
+      if (initial && remoteVersion === 0 && !bootWasSeeded && state.tasks.length) {
+        const useCloud = confirm(
+          'A cloud workspace already exists in Neon.\n\n' +
+          'OK — load the CLOUD data (replaces this device’s local data)\n' +
+          'Cancel — keep THIS DEVICE’s data and overwrite the cloud'
+        );
+        if (!useCloud) {
+          syncDirty = true; // push local up; version-conflict path overwrites
+          setSyncStatus('syncing');
+          return;
         }
-        // Adopt remote (another device/session wrote, or fresh browser).
+      }
+      // Step 2 — version changed: now fetch the full document and adopt it.
+      setSyncStatus('syncing');
+      const r = await neonQuery('SELECT data, version FROM workspace WHERE id=$1', [WORKSPACE_ID]);
+      if (r.rows.length) {
         const data = typeof r.rows[0].data === 'string' ? JSON.parse(r.rows[0].data) : r.rows[0].data;
         state = Object.assign(defaultState(), data);
         state.settings = Object.assign(defaultState().settings, data.settings);
-        remoteVersion = v; syncDirty = false;
+        remoteVersion = +r.rows[0].version; syncDirty = false;
         try {
           localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-          localStorage.setItem(VERSION_KEY, String(v));
+          localStorage.setItem(VERSION_KEY, String(remoteVersion));
         } catch (e) {}
         applyAll();
         if (!initial) toast('Updated from another session', 'info');
@@ -2245,11 +2246,15 @@ function init() {
   // reminder loop
   checkReminders();
   setInterval(checkReminders, 30000);
-  // cloud sync: adopt/migrate on boot, then poll + sync on focus
+  // cloud sync: adopt/migrate on boot, then poll while visible.
+  // Hidden tabs skip polling entirely so Neon's compute can auto-suspend
+  // (saves free-tier compute hours); we re-sync the moment the tab returns.
+  const pollTick = () => { if (!document.hidden) syncFromRemote(); };
   syncFromRemote(true);
-  setInterval(() => syncFromRemote(), 60000);
-  window.addEventListener('focus', () => syncFromRemote());
-  window.addEventListener('online', () => { if (syncDirty) pushToRemote(); else syncFromRemote(); });
+  setInterval(pollTick, 60000);
+  document.addEventListener('visibilitychange', pollTick);
+  window.addEventListener('focus', pollTick);
+  window.addEventListener('online', () => { if (syncDirty) pushToRemote(); else pollTick(); });
   // re-render dashboard on resize for canvas crispness
   window.addEventListener('resize', debounce(() => { if (state.settings.view === 'dashboard') renderDashboard(); }, 250));
   // expose for debugging (getter: `state` is reassigned by import/reset)
