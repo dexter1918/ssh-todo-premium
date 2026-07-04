@@ -264,7 +264,13 @@ h1, h2, h3, h4 { margin: 0; font-weight: 700; letter-spacing: -0.01em; }
 .mini-stat b { font-size: 18px; font-weight: 800; }
 .mini-stat span { font-size: 11px; color: var(--text-3); }
 
-.sidebar-footer { display: flex; gap: 8px; padding: 10px 4px 2px; border-top: 1px solid var(--hairline); margin-top: 6px; flex-shrink: 0; }
+.sidebar-footer { display: flex; align-items: center; gap: 8px; padding: 10px 4px 2px; border-top: 1px solid var(--hairline); margin-top: 6px; flex-shrink: 0; }
+.sync-chip { display: flex; align-items: center; gap: 6px; padding: 0 6px; font-size: 11px; font-weight: 600; color: var(--text-3); white-space: nowrap; flex: 0 0 auto; }
+.sync-chip .sync-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); flex: 0 0 auto; }
+.sync-chip.synced .sync-dot { background: #22c55e; }
+.sync-chip.syncing .sync-dot { background: #f59e0b; animation: syncPulse 1s ease-in-out infinite; }
+.sync-chip.offline .sync-dot { background: #ef4444; }
+@keyframes syncPulse { 50% { opacity: 0.25; } }
 .ghost-btn {
   flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px;
   padding: 9px; border-radius: 11px; color: var(--text-2); font-weight: 600; font-size: 12.5px;
