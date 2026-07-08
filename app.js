@@ -56,6 +56,12 @@ function fmtTime(t) {
   const ap = h >= 12 ? 'PM' : 'AM'; const hr = h % 12 || 12;
   return `${hr}:${pad(m)} ${ap}`;
 }
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/* absolute timestamp: "12 Jul 2026, 15:25" */
+function fmtDateTime(ts) {
+  const d = new Date(ts);
+  return `${d.getDate()} ${MONTHS_SHORT[d.getMonth()]} ${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 function timeAgo(ts) {
   const s = Math.floor((Date.now() - ts) / 1000);
   if (s < 60) return 'just now';
@@ -155,9 +161,26 @@ const defaultState = () => ({
     sidebarWidth: 300, listWidth: 450, sidebarCollapsed: false,
     view: 'list', sort: 'manual', sortDir: 'asc', group: 'none',
     appName: 'Nimbus', name: 'Salman Haider', current: 'all',
+    defaultFolderId: null,
     filters: {},
   },
 });
+
+/* Every task belongs to a folder. New/orphaned tasks land in the default
+   folder (Settings); falls back to the first live folder if unset/invalid. */
+function getDefaultFolderId() {
+  const f = folderById(state.settings.defaultFolderId);
+  if (f && !f.archived) return f.id;
+  const first = state.folders.find((x) => !x.archived);
+  return first ? first.id : null;
+}
+function enforceFolderRule() {
+  const def = getDefaultFolderId();
+  if (!def) return false;
+  let changed = false;
+  state.tasks.forEach((t) => { if (!t.folderId) { t.folderId = def; changed = true; } });
+  return changed;
+}
 
 function load() {
   try {
@@ -449,7 +472,7 @@ function seed() {
 /* ------------------------------------------------------------------ *
  *  2. Selectors / filtering / sorting / grouping
  * ------------------------------------------------------------------ */
-const ui = { selected: null, multi: new Set(), search: '', cal: new Date(), collapsedGroups: new Set() };
+const ui = { selected: null, multi: new Set(), search: '', cal: new Date(), collapsedGroups: new Set(), preTagList: null };
 
 function visibleBase() { return state.tasks.filter((t) => !t.trashed); }
 
@@ -476,16 +499,14 @@ function currentTasks() {
   const cur = state.settings.current;
   let list;
   if (ui.search) {
-    // Global search: look across everything except the other "hidden" buckets.
-    // Trash and Archived search their own contents; everywhere else searches
-    // all live tasks and notes regardless of the current list.
-    if (cur === 'trash') list = state.tasks.filter((t) => t.trashed);
-    else if (cur === 'archived') list = visibleBase().filter((t) => t.archived);
-    else list = visibleBase().filter((t) => !t.archived);
+    // Global search across all live tasks and notes (not Trash / Archived),
+    // regardless of where the user currently is. Results render in their own
+    // dedicated view grouped by folder path (see renderSearchResults).
     const q = ui.search;
-    list = list.filter((t) => fuzzy(q, t.title) >= 0 || stripHtml(t.notes).toLowerCase().includes(q.toLowerCase())
-      || t.tags.some((tg) => tg.toLowerCase().includes(q.toLowerCase()))
-      || t.subtasks.some((s) => s.text.toLowerCase().includes(q.toLowerCase())));
+    list = visibleBase().filter((t) => !t.archived)
+      .filter((t) => fuzzy(q, t.title) >= 0 || stripHtml(t.notes).toLowerCase().includes(q.toLowerCase())
+        || t.tags.some((tg) => tg.toLowerCase().includes(q.toLowerCase()))
+        || t.subtasks.some((s) => s.text.toLowerCase().includes(q.toLowerCase())));
   } else if (cur === 'trash') list = state.tasks.filter((t) => t.trashed);
   else if (cur.startsWith('folder:')) {
     const fid = cur.slice(7);
@@ -617,6 +638,7 @@ function addTask(props = {}, opts = {}) {
   else if (cur.startsWith('folder:')) base.folderId = cur.slice(7);
   else if (cur.startsWith('tag:')) base.tags = [cur.slice(4)];
   const t = Object.assign(base, props);
+  if (!t.folderId) t.folderId = getDefaultFolderId(); // every task belongs to a folder
   logActivity(t, 'Task created');
   state.tasks.unshift(t);
   save();
@@ -720,6 +742,16 @@ function renderSidebar() {
   $('profileName').textContent = state.settings.name;
   $('avatar').textContent = (state.settings.name[0] || 'U').toUpperCase();
   $('profileStreak').textContent = '🔥 ' + computeStreak();
+  renderDefaultFolderSelect();
+}
+
+function renderDefaultFolderSelect() {
+  const sel = $('settingDefaultFolder'); if (!sel) return;
+  const fs = state.folders.filter((f) => !f.archived);
+  const def = getDefaultFolderId();
+  sel.innerHTML = fs.length
+    ? fs.map((f) => `<option value="${f.id}"${def === f.id ? ' selected' : ''}>${f.icon} ${escapeHtml(f.name)}</option>`).join('')
+    : '<option value="" disabled selected>No folders yet</option>';
 }
 
 function smartCounts() {
@@ -739,13 +771,14 @@ function smartCounts() {
 function renderHeader() {
   const cur = state.settings.current;
   let title = 'Tasks', emoji = '🗂️';
-  if (cur.startsWith('folder:')) { const f = folderById(cur.slice(7)); if (f) { title = f.name; emoji = f.icon; } }
+  if (ui.search) { title = 'Search results'; emoji = '🔍'; }
+  else if (cur.startsWith('folder:')) { const f = folderById(cur.slice(7)); if (f) { title = f.name; emoji = f.icon; } }
   else if (cur.startsWith('tag:')) { title = '#' + cur.slice(4); emoji = '🏷️'; }
   else { const l = SMART_LISTS.find((x) => x.id === cur); if (l) { title = l.label; emoji = l.icon; } }
   $('listTitle').textContent = title;
   $('listEmoji').textContent = emoji;
   $('listCount').textContent = currentTasks().length;
-  $('emptyTrashBtn').hidden = !(cur === 'trash' && state.tasks.some((t) => t.trashed));
+  $('emptyTrashBtn').hidden = !(cur === 'trash' && !ui.search && state.tasks.some((t) => t.trashed));
   $$('.view-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === state.settings.view));
   renderFilterChips();
 }
@@ -762,19 +795,66 @@ function renderFilterChips() {
 
 /* ----- views switcher ----- */
 function renderView() {
-  const v = state.settings.view;
-  ['List', 'Board', 'Calendar', 'Timeline', 'Dashboard'].forEach((name) => {
-    $('view' + name).hidden = (name.toLowerCase() !== v) && !(name === 'List' && v === 'list');
-  });
   const map = { list: 'viewList', board: 'viewBoard', calendar: 'viewCalendar', timeline: 'viewTimeline', dashboard: 'viewDashboard' };
   Object.values(map).forEach((id) => $(id).hidden = true);
-  $(map[v]).hidden = false;
   renderBulkBar();
+  // Active search takes over the middle pane with its own grouped view;
+  // clearing the search restores whatever view/list the user was on.
+  if (ui.search) { $('viewList').hidden = false; renderSearchResults(); return; }
+  const v = state.settings.view;
+  $(map[v]).hidden = false;
   if (v === 'list') renderList();
   else if (v === 'board') renderBoard();
   else if (v === 'calendar') renderCalendar();
   else if (v === 'timeline') renderTimeline();
   else if (v === 'dashboard') renderDashboard();
+}
+
+/* ----- dedicated search-results view, grouped by folder path ----- */
+function folderPathLabel(fid) {
+  const parts = [];
+  let f = folderById(fid), guard = 0;
+  while (f && guard++ < 10) { parts.unshift(`${f.icon} ${escapeHtml(f.name)}`); f = folderById(f.parentId); }
+  return parts.join(' / ') || '📂 No folder';
+}
+function searchGroups(tasks) {
+  // bucket by folder, label with the full nested path
+  const buckets = new Map();
+  tasks.forEach((t) => {
+    const key = t.folderId || '_none';
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(t);
+  });
+  return [...buckets.entries()]
+    .map(([key, list]) => ({ key: 'search:' + key, label: folderPathLabel(key === '_none' ? null : key), tasks: list }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+function renderSearchResults() {
+  const container = $('viewList');
+  const scroll = $('listScroll');
+  scroll.classList.remove('virtual');
+  virtual = null;
+  container.style.height = ''; container.style.position = '';
+  const tasks = currentTasks();
+  if (!tasks.length) { container.innerHTML = emptyStateHtml(); return; }
+  let html = '';
+  searchGroups(tasks).forEach((g) => {
+    html += groupHeadHtml(g);
+    if (!ui.collapsedGroups.has(g.key)) g.tasks.forEach((t) => { html += taskCardHtml(t); });
+  });
+  container.innerHTML = html;
+}
+/* Task ids in the order the user actually SEES them (search grouping or
+   list grouping), skipping collapsed groups — keyboard nav follows this. */
+function displayedTaskIds() {
+  const tasks = currentTasks();
+  if (ui.search) {
+    return searchGroups(tasks).filter((g) => !ui.collapsedGroups.has(g.key)).flatMap((g) => g.tasks).map((t) => t.id);
+  }
+  if (state.settings.view === 'list' && state.settings.group !== 'none') {
+    return groupTasks(tasks).filter((g) => !ui.collapsedGroups.has(g.key)).flatMap((g) => g.tasks).map((t) => t.id);
+  }
+  return tasks.map((t) => t.id);
 }
 
 /* ------------------------------------------------------------------ *
@@ -897,7 +977,7 @@ function taskCardHtml(t, virt) {
 /* ----- bulk bar ----- */
 function renderBulkBar() {
   const bar = $('bulkBar');
-  if (ui.multi.size && state.settings.view === 'list') { bar.hidden = false; $('bulkCount').textContent = ui.multi.size; }
+  if (ui.multi.size && (state.settings.view === 'list' || ui.search)) { bar.hidden = false; $('bulkCount').textContent = ui.multi.size; }
   else bar.hidden = true;
 }
 
@@ -1224,9 +1304,15 @@ function renderDetail() {
   $('metaReminder').value = t.reminder || '';
   $('metaRepeat').value = t.repeat || '';
 
-  // folder select
-  $('metaFolder').innerHTML = '<option value="">No folder</option>' +
-    state.folders.filter((f) => !f.archived).map((f) => `<option value="${f.id}"${t.folderId === f.id ? ' selected' : ''}>${f.icon} ${escapeHtml(f.name)}</option>`).join('');
+  // folder select — every task belongs to a folder, so no "No folder" option
+  const liveFolders = state.folders.filter((f) => !f.archived);
+  const orphaned = t.folderId && !liveFolders.some((f) => f.id === t.folderId);
+  const archivedHome = orphaned ? folderById(t.folderId) : null;
+  $('metaFolder').innerHTML =
+    (liveFolders.length === 0 ? '<option value="" selected disabled>No folders yet</option>' : '') +
+    (archivedHome ? `<option value="${archivedHome.id}" selected>${archivedHome.icon} ${escapeHtml(archivedHome.name)} (archived)</option>` : '') +
+    ((!t.folderId && liveFolders.length) ? '<option value="" selected disabled>Choose folder…</option>' : '') +
+    liveFolders.map((f) => `<option value="${f.id}"${t.folderId === f.id ? ' selected' : ''}>${f.icon} ${escapeHtml(f.name)}</option>`).join('');
 
   renderTagEditor(t);
   renderSubtasks(t);
@@ -1258,23 +1344,26 @@ function renderSubtasks(t) {
   $('subtaskFill').style.width = progressOf(t) + '%';
   $('subtaskList').innerHTML = t.subtasks.map((s) => `
     <li class="subtask-item${s.done ? ' done' : ''}" data-sid="${s.id}">
+      <span class="st-grip" title="Drag to reorder">⋮⋮</span>
       <span class="st-check${s.done ? ' checked' : ''}" data-st-check="${s.id}"></span>
       <span class="st-text" contenteditable="true" data-st-text="${s.id}">${escapeHtml(s.text)}</span>
       <button class="st-del" data-st-del="${s.id}" title="Delete">✕</button>
     </li>`).join('');
 }
 function renderActivity(t) {
-  const acts = (t.activity || []).slice(0, 8);
+  const acts = t.activity || []; // full history; the list scrolls past its height cap
   $('activityTimeline').innerHTML = acts.length ? acts.map((a) => `
-    <li class="tl-event"><span class="tl-bullet"></span><div><div class="tl-text">${escapeHtml(a.text)}</div><div class="tl-time">${timeAgo(a.ts)}</div></div></li>`).join('')
+    <li class="tl-event"><span class="tl-bullet"></span><div><div class="tl-text">${escapeHtml(a.text)}</div><div class="tl-time">${fmtDateTime(a.ts)}</div></div></li>`).join('')
     : '<li style="color:var(--text-3);font-size:12.5px">No activity yet</li>';
 }
 function renderComments(t) {
   const cs = t.comments || [];
-  $('commentList').innerHTML = cs.length ? cs.map((c) => `
+  const cl = $('commentList');
+  cl.innerHTML = cs.length ? cs.map((c) => `
     <li class="comment"><span class="c-avatar">${(state.settings.name[0] || 'U').toUpperCase()}</span>
-      <div class="c-bubble">${escapeHtml(c.text)}<div class="c-time">${timeAgo(c.ts)}</div></div></li>`).join('')
+      <div class="c-bubble">${escapeHtml(c.text)}<div class="c-time">${fmtDateTime(c.ts)}</div></div></li>`).join('')
     : '<li style="color:var(--text-3);font-size:12.5px;padding:4px">No comments yet. Start the conversation.</li>';
+  cl.scrollTop = cl.scrollHeight; // newest comment stays visible past the height cap
 }
 
 /* ------------------------------------------------------------------ *
@@ -1346,6 +1435,14 @@ function submitQuickAdd() {
   const t = addTask(props);
   input.value = '';
   qaPrio = 'none'; $('qaPriority').dataset.prio = 'none';
+  // Show the new task's details on the right, but keep typing focus here so
+  // consecutive quick-adds flow. Skip on narrow layouts where the detail
+  // pane is a fullscreen overlay that would cover the quick-add bar.
+  if (window.matchMedia('(min-width: 1001px)').matches) {
+    openTask(t.id);
+    document.querySelector(`.task-card[data-id="${t.id}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    input.focus();
+  }
   toast('Task added', 'success');
 }
 let qaPrio = 'none';
@@ -1365,7 +1462,8 @@ function selectionInsideEditor() {
 function execEditor(cmd, val) {
   const ed = editorEl();
   // UI-only commands: leave the selection and document untouched
-  if (cmd === 'colorPicker') { const p = $('colorPop'); p.hidden = !p.hidden; return; }
+  if (cmd === 'colorPicker') { const p = $('colorPop'); $('bgPop').hidden = true; p.hidden = !p.hidden; return; }
+  if (cmd === 'bgPicker') { const p = $('bgPop'); $('colorPop').hidden = true; p.hidden = !p.hidden; return; }
   if (cmd === 'formatPainter') { painterActive ? cancelPainter() : armPainter(); return; }
 
   ed.focus();
@@ -1378,11 +1476,16 @@ function execEditor(cmd, val) {
   else if (cmd === 'createLink') { insertLink(); }
   else if (cmd === 'formatBlock') { toggleBlock(val); }
   else if (cmd === 'foreColor') {
-    const v = val === '__default'
-      ? (getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#1a1d28')
-      : val;
-    document.execCommand('foreColor', false, v);
-    hideColorPop();
+    // "Default" strips the inline color so text inherits the theme color and
+    // adapts when the theme changes; a real color is applied normally.
+    if (val === '__default') clearForeColor();
+    else document.execCommand('foreColor', false, val);
+    hideColorPops();
+  }
+  else if (cmd === 'hiliteColor') {
+    if (val === '__none') clearBackColor();
+    else if (!document.execCommand('hiliteColor', false, val)) document.execCommand('backColor', false, val);
+    hideColorPops();
   }
   else { document.execCommand(cmd, false, val || null); }
 
@@ -1393,6 +1496,46 @@ function execEditor(cmd, val) {
 /* ----- text color popover + format painter ----- */
 let painterActive = false, painterFmt = null;
 function hideColorPop() { const p = $('colorPop'); if (p) p.hidden = true; }
+function hideColorPops() { hideColorPop(); const b = $('bgPop'); if (b) b.hidden = true; }
+// Remove inline background highlight from the selection (sentinel technique,
+// same as clearForeColor: execCommand splits ancestor styling correctly).
+function clearBackColor() {
+  const sel = window.getSelection();
+  if (!sel.rangeCount || sel.isCollapsed) return;
+  if (!document.execCommand('hiliteColor', false, 'rgb(1,2,3)')) document.execCommand('backColor', false, 'rgb(1,2,3)');
+  const norm = (s) => (s || '').replace(/\s/g, '').toLowerCase();
+  editorEl().querySelectorAll('[style]').forEach((el) => {
+    if (norm(el.style.backgroundColor) === 'rgb(1,2,3)') {
+      el.style.removeProperty('background-color');
+      if (!el.getAttribute('style')) el.removeAttribute('style');
+      if (el.tagName === 'SPAN' && !el.attributes.length) {
+        const p = el.parentNode; while (el.firstChild) p.insertBefore(el.firstChild, el); p.removeChild(el);
+      }
+    }
+  });
+}
+// Remove inline foreground color from the selection so text inherits the theme.
+// Let execCommand normalize the selection into a sentinel-colored span (it
+// handles splitting ancestor <font>/color elements correctly), then unwrap
+// exactly those sentinel wrappers — leaving the text with no inline color.
+function clearForeColor() {
+  const sel = window.getSelection();
+  if (!sel.rangeCount || sel.isCollapsed) return;
+  const SENTINEL_HEX = '#010203', SENTINEL_RGB = 'rgb(1,2,3)';
+  document.execCommand('foreColor', false, SENTINEL_HEX);
+  const norm = (s) => (s || '').replace(/\s/g, '').toLowerCase();
+  const ed = editorEl();
+  ed.querySelectorAll('font[color]').forEach((el) => {
+    if (norm(el.getAttribute('color')) === SENTINEL_HEX) {
+      const p = el.parentNode; while (el.firstChild) p.insertBefore(el.firstChild, el); p.removeChild(el);
+    }
+  });
+  ed.querySelectorAll('[style]').forEach((el) => {
+    if (norm(el.style.color) === SENTINEL_HEX || norm(el.style.color) === SENTINEL_RGB) {
+      el.style.removeProperty('color'); if (!el.getAttribute('style')) el.removeAttribute('style');
+    }
+  });
+}
 function armPainter() {
   if (!selectionInsideEditor()) { toast('Click into formatted text first, then the painter', 'info'); return; }
   painterFmt = {
@@ -1742,7 +1885,7 @@ function runFolderCtx(action, f) {
   else if (action === 'icon') { const i = (prompt('Folder emoji:', f.icon) || '').trim(); if (i) { pushHistory(); f.icon = i; save(); renderSidebar(); } }
   else if (action === 'archive') { pushHistory(); f.archived = !f.archived; save(); renderSidebar(); }
   else if (action === 'delete') {
-    if (!confirm(`Delete folder “${f.name}”? Subfolders are deleted too; tasks are kept and unassigned.`)) return;
+    if (!confirm(`Delete folder “${f.name}”? Subfolders are deleted too; their tasks move to your default folder.`)) return;
     pushHistory();
     // collect the folder plus ALL descendants (any depth)
     const doomed = new Set([f.id]);
@@ -1751,8 +1894,10 @@ function runFolderCtx(action, f) {
       grew = false;
       state.folders.forEach((x) => { if (x.parentId && doomed.has(x.parentId) && !doomed.has(x.id)) { doomed.add(x.id); grew = true; } });
     }
-    state.tasks.forEach((t) => { if (doomed.has(t.folderId)) t.folderId = null; });
-    state.folders = state.folders.filter((x) => !doomed.has(x.id));
+    if (doomed.has(state.settings.defaultFolderId)) state.settings.defaultFolderId = null;
+    state.folders = state.folders.filter((x) => !doomed.has(x.id)); // remove first: fallback must pick a survivor
+    const fallback = getDefaultFolderId();
+    state.tasks.forEach((t) => { if (doomed.has(t.folderId)) t.folderId = fallback; });
     const cur = state.settings.current;
     if (cur.startsWith('folder:') && doomed.has(cur.slice(7))) navigate('all');
     save(); renderAll(); toast('Folder deleted', 'info');
@@ -1772,6 +1917,7 @@ function setView(v) { state.settings.view = v; save(); renderHeader(); renderVie
 function newTask() {
   const t = addTask({});
   openTask(t.id);
+  document.querySelector(`.task-card[data-id="${t.id}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   $('detailTitle').focus(); $('detailTitle').select();
 }
 
@@ -1921,6 +2067,7 @@ function importData(file) {
   reader.onload = () => {
     try { const data = JSON.parse(reader.result); if (!data.tasks) throw 0;
       pushHistory(); state = Object.assign(defaultState(), data); state.settings = Object.assign(defaultState().settings, data.settings);
+      enforceFolderRule();
       save(); applyAll(); toast('Data imported', 'success');
     } catch (e) { toast('Invalid file', 'error'); }
   };
@@ -1999,7 +2146,17 @@ function wire() {
     const nav = e.target.closest('[data-nav]');
     if (nav) { navigate(nav.dataset.nav); return; }
     const tag = e.target.closest('[data-tag]');
-    if (tag) { navigate('tag:' + tag.dataset.tag); return; }
+    if (tag) {
+      const target = 'tag:' + tag.dataset.tag;
+      if (state.settings.current === target) {
+        // re-click on the active tag: toggle off, return to the pre-tag list
+        navigate(ui.preTagList || 'all');
+      } else {
+        if (!state.settings.current.startsWith('tag:')) ui.preTagList = state.settings.current;
+        navigate(target);
+      }
+      return;
+    }
   });
   $('sidebar').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { const nav = e.target.closest('[data-nav]'); if (nav) navigate(nav.dataset.nav); }
@@ -2020,6 +2177,13 @@ function wire() {
   /* search */
   const onSearch = debounce(() => { ui.search = $('searchInput').value.trim(); renderHeader(); renderView(); }, 180);
   $('searchInput').addEventListener('input', onSearch);
+  $('searchInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation(); // don't let the global Esc close the detail pane too
+      ui.search = ''; $('searchInput').value = ''; $('searchInput').blur();
+      renderHeader(); renderView();
+    }
+  });
 
   /* empty trash */
   $('emptyTrashBtn').addEventListener('click', () => {
@@ -2089,7 +2253,12 @@ function wire() {
   /* ---- list / views click (delegation) ---- */
   $('listScroll').addEventListener('click', (e) => {
     const groupHead = e.target.closest('[data-group]');
-    if (groupHead) { const k = groupHead.dataset.group; ui.collapsedGroups.has(k) ? ui.collapsedGroups.delete(k) : ui.collapsedGroups.add(k); renderList(); return; }
+    if (groupHead) {
+      const k = groupHead.dataset.group;
+      ui.collapsedGroups.has(k) ? ui.collapsedGroups.delete(k) : ui.collapsedGroups.add(k);
+      ui.search ? renderSearchResults() : renderList();
+      return;
+    }
 
     const check = e.target.closest('[data-check]');
     if (check) { e.stopPropagation(); animateComplete(check); toggleComplete(check.dataset.check); renderAll(); return; }
@@ -2098,6 +2267,18 @@ function wire() {
     if (card && card.dataset.id) {
       if (e.metaKey || e.ctrlKey) { toggleMulti(card.dataset.id); return; }
       if (e.shiftKey && ui.selected) { rangeSelect(card.dataset.id); return; }
+      if (ui.search) {
+        // Search result clicked: dismiss the search, jump to the task's
+        // folder, then open its details and reveal its card there.
+        const id = card.dataset.id;
+        const t = taskById(id);
+        ui.search = ''; $('searchInput').value = '';
+        const home = t && folderById(t.folderId);
+        navigate(home && !home.archived ? 'folder:' + home.id : 'all');
+        openTask(id);
+        document.querySelector(`.task-card[data-id="${id}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        return;
+      }
       openTask(card.dataset.id); return;
     }
     // calendar nav
@@ -2136,7 +2317,7 @@ function wire() {
   document.addEventListener('click', (e) => {
     if (!e.target.closest('#contextMenu')) hideContextMenu();
     if (!e.target.closest('#popover') && !e.target.closest('#sortBtn') && !e.target.closest('#filterBtn')) hidePopover();
-    if (!e.target.closest('.tb-color-wrap')) hideColorPop();
+    if (!e.target.closest('.tb-color-wrap')) hideColorPops();
     const rip = e.target.closest('.icon-btn, .btn, .qa-submit, .view-btn, .comment-send');
     if (rip) ripple(e, rip);
   });
@@ -2200,6 +2381,48 @@ function wire() {
     if (s) { s.text = span.textContent; touch(t); save(); }
   }, 300));
 
+  /* subtask drag-reorder — draggable only while gripping the ⋮⋮ handle so
+     text selection/editing inside subtasks is never hijacked */
+  const stList = $('subtaskList');
+  let subDragId = null;
+  stList.addEventListener('mousedown', (e) => {
+    const grip = e.target.closest('.st-grip');
+    if (grip) grip.closest('.subtask-item').draggable = true;
+  });
+  stList.addEventListener('dragstart', (e) => {
+    const li = e.target.closest('.subtask-item');
+    if (!li || !li.draggable) return;
+    e.stopPropagation(); // keep the global task-card DnD out of this
+    subDragId = li.dataset.sid;
+    li.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', 'subtask:' + subDragId); } catch (_) {}
+  });
+  stList.addEventListener('dragover', (e) => {
+    if (!subDragId) return;
+    e.preventDefault(); e.stopPropagation();
+    const over = e.target.closest('.subtask-item');
+    const dragEl = stList.querySelector('.subtask-item.dragging');
+    if (!over || !dragEl || over === dragEl) return;
+    const r = over.getBoundingClientRect();
+    stList.insertBefore(dragEl, e.clientY < r.top + r.height / 2 ? over : over.nextSibling);
+  });
+  stList.addEventListener('drop', (e) => { if (subDragId) { e.preventDefault(); e.stopPropagation(); } });
+  stList.addEventListener('dragend', (e) => {
+    const li = e.target.closest('.subtask-item');
+    if (li) { li.draggable = false; li.classList.remove('dragging'); }
+    if (!subDragId || !detailTask) { subDragId = null; return; }
+    subDragId = null;
+    const t = taskById(detailTask.id); if (!t) return;
+    const domOrder = [...stList.querySelectorAll('.subtask-item')].map((el) => el.dataset.sid);
+    if (domOrder.join() !== t.subtasks.map((s) => s.id).join()) {
+      pushHistory();
+      t.subtasks.sort((a, b) => domOrder.indexOf(a.id) - domOrder.indexOf(b.id));
+      touch(t); save();
+      renderSubtasks(t);
+    }
+  });
+
   /* editor */
   // Keep the editor's text selection alive when a toolbar button is pressed.
   $('editorToolbar').addEventListener('mousedown', (e) => { if (e.target.closest('button')) e.preventDefault(); });
@@ -2249,6 +2472,12 @@ function wire() {
   $('themeSeg').addEventListener('click', (e) => { const b = e.target.closest('[data-theme-set]'); if (b) setTheme(b.dataset.themeSet); });
   $('accentRow').addEventListener('click', (e) => { const d = e.target.closest('[data-accent]'); if (d) { state.settings.accent = d.dataset.accent; const a = ACCENTS.find((x) => x.hex === d.dataset.accent); state.settings.accentRgb = a.rgb; save(); applyAccent(); if (state.settings.view === 'dashboard') renderDashboard(); } });
   $('settingAppName').addEventListener('input', debounce(() => { state.settings.appName = $('settingAppName').value.trim(); save(); applyBranding(); }, 150));
+  $('settingDefaultFolder').addEventListener('change', () => {
+    state.settings.defaultFolderId = $('settingDefaultFolder').value || null;
+    if (enforceFolderRule()) renderAll(); // adopt any stray folderless tasks immediately
+    save();
+    toast('Default folder updated', 'success');
+  });
   $('settingName').addEventListener('input', debounce(() => { state.settings.name = $('settingName').value || 'You'; save(); renderSidebar(); renderComments(detailTask ? taskById(detailTask.id) : {}); }, 200));
   $('enableNotif').addEventListener('click', () => { Notification.requestPermission().then((p) => toast(p === 'granted' ? 'Notifications enabled' : 'Notifications blocked', p === 'granted' ? 'success' : 'error')); });
   $('exportBtn').addEventListener('click', exportData);
@@ -2294,12 +2523,13 @@ function toggleMulti(id) {
   renderBulkBar();
 }
 function rangeSelect(id) {
-  const ids = currentTasks().map((t) => t.id);
+  const ids = displayedTaskIds();
   const a = ids.indexOf(ui.selected), b = ids.indexOf(id);
   if (a < 0 || b < 0) { openTask(id); return; }
   const [lo, hi] = [Math.min(a, b), Math.max(a, b)];
   for (let i = lo; i <= hi; i++) ui.multi.add(ids[i]);
-  renderList(); renderBulkBar();
+  ui.search ? renderSearchResults() : renderList();
+  renderBulkBar();
 }
 
 /* ----- completion animation ----- */
@@ -2326,7 +2556,7 @@ function onKeydown(e) {
   if (mod && e.key.toLowerCase() === 'd') { if (typing) return; e.preventDefault(); if (ui.selected) duplicateTask(ui.selected); return; }
 
   if (e.key === 'Escape') {
-    if (!$('colorPop').hidden) return hideColorPop();
+    if (!$('colorPop').hidden || !$('bgPop').hidden) return hideColorPops();
     if (painterActive) return cancelPainter();
     if (!$('paletteOverlay').hidden) return closePalette();
     if (!$('settingsOverlay').hidden) return closeOverlay($('settingsOverlay'));
@@ -2346,7 +2576,7 @@ function onKeydown(e) {
   else if (e.key === 'Enter' && ui.selected) { $('detailTitle').focus(); }
 }
 function moveSelection(d) {
-  const ids = currentTasks().map((t) => t.id);
+  const ids = displayedTaskIds(); // walk what the user sees, incl. grouped order
   if (!ids.length) return;
   let i = ids.indexOf(ui.selected);
   i = i < 0 ? 0 : clamp(i + d, 0, ids.length - 1);
@@ -2389,6 +2619,7 @@ function applyAll() {
 function init() {
   load();
   remoteVersion = +(localStorage.getItem(VERSION_KEY) || 0);
+  if (enforceFolderRule()) save(); // one-time migration of folderless tasks
   // A previous session ended with edits that never reached Neon — treat
   // them as pending so the boot sync pushes instead of adopting over them.
   syncDirty = localStorage.getItem(DIRTY_KEY) === '1';

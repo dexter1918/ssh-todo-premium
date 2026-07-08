@@ -305,6 +305,19 @@
                   <button data-cmd="foreColor" data-val="#ec4899" style="background:#ec4899" title="Pink"></button>
                 </div>
               </span>
+              <span class="tb-color-wrap">
+                <button data-cmd="bgPicker" title="Highlight color"><span class="bg-a">A</span></button>
+                <div class="color-pop" id="bgPop" hidden>
+                  <button data-cmd="hiliteColor" data-val="__none" class="swatch-default" title="No highlight">✕</button>
+                  <button data-cmd="hiliteColor" data-val="rgba(250,204,21,0.35)" style="background:#fde047" title="Yellow"></button>
+                  <button data-cmd="hiliteColor" data-val="rgba(249,115,22,0.3)" style="background:#fdba74" title="Orange"></button>
+                  <button data-cmd="hiliteColor" data-val="rgba(34,197,94,0.3)" style="background:#86efac" title="Green"></button>
+                  <button data-cmd="hiliteColor" data-val="rgba(20,184,166,0.3)" style="background:#5eead4" title="Teal"></button>
+                  <button data-cmd="hiliteColor" data-val="rgba(59,130,246,0.3)" style="background:#93c5fd" title="Blue"></button>
+                  <button data-cmd="hiliteColor" data-val="rgba(139,92,246,0.3)" style="background:#c4b5fd" title="Violet"></button>
+                  <button data-cmd="hiliteColor" data-val="rgba(236,72,153,0.3)" style="background:#f9a8d4" title="Pink"></button>
+                </div>
+              </span>
               <button data-cmd="formatPainter" title="Format painter — copy formatting, then select target text">🖌️</button>
             </div>
             <div class="editor" id="editor" contenteditable="true" spellcheck="true" data-placeholder="Start writing… notes auto-save as you type."></div>
@@ -382,6 +395,10 @@
         <div class="setting-row">
           <div><h4>Display name</h4><p>Shown in your profile.</p></div>
           <input type="text" id="settingName" class="meta-input" style="max-width:200px" />
+        </div>
+        <div class="setting-row">
+          <div><h4>Default folder</h4><p>New tasks with no folder are saved here.</p></div>
+          <select id="settingDefaultFolder" class="meta-select" style="max-width:200px"></select>
         </div>
         <div class="setting-row">
           <div><h4>Notifications</h4><p>Reminders &amp; due-task alerts.</p></div>
