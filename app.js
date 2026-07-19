@@ -437,7 +437,7 @@ function seed() {
 
   const mk = (o) => Object.assign({
     id: uid(), title: '', description: '', notes: '', subtasks: [], priority: 'none',
-    tags: [], folderId: null, due: '', time: '', reminder: '', repeat: '',
+    tags: [], folderId: null, due: '', time: '', repeat: '',
     starred: false, pinned: false, completed: false, archived: false, trashed: false,
     status: 'todo', isNote: false, order: 0, comments: [], activity: [],
     createdAt: Date.now(), updatedAt: Date.now(),
@@ -445,7 +445,7 @@ function seed() {
 
   state.tasks = [
     mk({ title: 'Finalize Q3 product roadmap', priority: 'high', folderId: fWork.id, due: t, time: '15:00',
-        reminder: '60', status: 'inprogress', starred: true, pinned: true, tags: ['planning', 'urgent'],
+        status: 'inprogress', starred: true, pinned: true, tags: ['planning', 'urgent'],
         notes: '<h2>Roadmap goals</h2><p>Align engineering and design on the <b>three core bets</b> for next quarter.</p><ul><li>Onboarding revamp</li><li>Collaboration features</li><li>Performance pass</li></ul>',
         subtasks: [{ id: uid(), text: 'Collect team input', done: true }, { id: uid(), text: 'Draft slide deck', done: true }, { id: uid(), text: 'Review with leadership', done: false }],
         activity: [{ ts: Date.now() - 36e5, text: 'Task created' }], }),
@@ -461,7 +461,7 @@ function seed() {
         subtasks: [{ id: uid(), text: 'Audit endpoints', done: true }, { id: uid(), text: 'Token rotation', done: false }] }),
     mk({ title: 'Plan weekend hike', priority: 'low', folderId: fPersonal.id, due: addDays(t, 4), tags: ['fun'] }),
     mk({ title: 'Submit expense report', priority: 'medium', folderId: fWork.id, completed: true, status: 'done', due: addDays(t, -2) }),
-    mk({ title: 'Renew domain name', priority: 'medium', folderId: fSide.id, due: addDays(t, 14), reminder: '1440' }),
+    mk({ title: 'Renew domain name', priority: 'medium', folderId: fSide.id, due: addDays(t, 14) }),
     mk({ title: 'Brainstorm app ideas', isNote: true, folderId: fSide.id, tags: ['ideas'],
         notes: '<p>A few raw ideas worth exploring:</p><ul data-type="check"><li class="done">Habit tracker</li><li>Recipe organizer</li><li>Focus timer</li></ul>' }),
   ];
@@ -523,7 +523,6 @@ function currentTasks() {
   if (f.priority) list = list.filter((t) => t.priority === f.priority);
   if (f.status) list = list.filter((t) => t.status === f.status);
   if (f.starred) list = list.filter((t) => t.starred);
-  if (f.reminder) list = list.filter((t) => !!t.reminder);
   if (f.completion === 'done') list = list.filter((t) => t.completed);
   if (f.completion === 'open') list = list.filter((t) => !t.completed);
   if (f.date === 'has') list = list.filter((t) => !!t.due);
@@ -624,7 +623,7 @@ function addTask(props = {}, opts = {}) {
   const cur = state.settings.current;
   const base = {
     id: uid(), title: '', description: '', notes: '', subtasks: [], priority: 'none',
-    tags: [], folderId: null, due: '', time: '', reminder: '', repeat: '',
+    tags: [], folderId: null, due: '', time: '', repeat: '',
     starred: false, pinned: false, completed: false, archived: false, trashed: false,
     status: 'todo', isNote: false, order: -Date.now(), comments: [], activity: [],
     createdAt: Date.now(), updatedAt: Date.now(),
@@ -786,7 +785,7 @@ function renderHeader() {
 function renderFilterChips() {
   const f = state.settings.filters || {};
   const chips = [];
-  const labels = { priority: 'Priority', status: 'Status', starred: 'Starred', reminder: 'Has reminder', completion: 'Completion', date: 'Date' };
+  const labels = { priority: 'Priority', status: 'Status', starred: 'Starred', completion: 'Completion', date: 'Date' };
   Object.entries(f).forEach(([k, v]) => { if (v) chips.push(`<span class="filter-chip">${labels[k] || k}: ${v === true ? 'yes' : v}<button data-rmfilter="${k}">✕</button></span>`); });
   const box = $('filterChips');
   if (chips.length) { box.hidden = false; box.innerHTML = chips.join('') + '<button class="filter-chip" data-rmfilter="*" style="cursor:pointer">Clear all</button>'; $('filterDot').hidden = false; }
@@ -966,7 +965,6 @@ function taskCardHtml(t, virt) {
       ${preview ? `<div class="task-preview">${escapeHtml(preview).slice(0, 120)}</div>` : ''}
       <div class="task-meta">
         ${dueTxt ? `<span class="task-badge${dueCls}">📅 ${dueTxt}</span>` : ''}
-        ${t.reminder ? '<span class="task-badge" title="Reminder set">🔔</span>' : ''}
         ${stCount ? `<span class="task-progress-mini">☑ ${stDone}/${stCount}<span class="mini-bar"><i style="width:${prog}%"></i></span></span>` : ''}
         ${t.tags.slice(0, 3).map((tg) => `<span class="task-tag"><span class="tdot" style="background:${tagColor(tg)}"></span>${escapeHtml(tg)}</span>`).join('')}
       </div>
@@ -1301,7 +1299,6 @@ function renderDetail() {
   $('metaStatus').value = t.status;
   $('metaDate').value = t.due || '';
   $('metaTime').value = t.time || '';
-  $('metaReminder').value = t.reminder || '';
   $('metaRepeat').value = t.repeat || '';
 
   // folder select — every task belongs to a folder, so no "No folder" option
@@ -1943,7 +1940,6 @@ function showFilterPopover(anchor) {
       ${STATUS_COLS.map((c) => `<div class="pop-item${f.status === c.id ? ' active' : ''}" data-filter="status:${c.id}">${c.label}<span class="check">✓</span></div>`).join('')}</div>
     <div class="pop-group"><div class="pop-title">Other</div>
       <div class="pop-item${f.starred ? ' active' : ''}" data-filter="starred:1">⭐ Starred<span class="check">✓</span></div>
-      <div class="pop-item${f.reminder ? ' active' : ''}" data-filter="reminder:1">🔔 Has reminder<span class="check">✓</span></div>
       <div class="pop-item${f.completion === 'open' ? ' active' : ''}" data-filter="completion:open">Open only<span class="check">✓</span></div>
       <div class="pop-item${f.completion === 'done' ? ' active' : ''}" data-filter="completion:done">Completed only<span class="check">✓</span></div>
       <div class="pop-item${f.date === 'has' ? ' active' : ''}" data-filter="date:has">Has due date<span class="check">✓</span></div></div>
@@ -2026,27 +2022,6 @@ function setupDnD() {
       ids.splice(to, 0, ids.splice(from, 1)[0]);
       ids.forEach((id, i) => { const tk = taskById(id); if (tk) tk.order = i; });
       save(); renderList();
-    }
-  });
-}
-
-/* ------------------------------------------------------------------ *
- *  20. Reminders / notifications
- * ------------------------------------------------------------------ */
-const firedReminders = new Set();
-function checkReminders() {
-  const canNotify = typeof Notification !== 'undefined' && Notification.permission === 'granted';
-  const now = new Date();
-  state.tasks.forEach((t) => {
-    if (t.completed || t.trashed || !t.due || !t.reminder) return;
-    const dt = new Date(t.due + 'T' + (t.time || '09:00'));
-    const offset = t.reminder === 'at' ? 0 : (+t.reminder || 0);
-    const fireAt = dt.getTime() - offset * 60000;
-    if (fireAt <= now.getTime() && fireAt > now.getTime() - 60000 && !firedReminders.has(t.id + fireAt)) {
-      firedReminders.add(t.id + fireAt);
-      // in-app toast always fires; the OS notification is a bonus when permitted
-      if (canNotify) { try { new Notification('⏰ ' + t.title, { body: (t.due === todayStr() ? 'Due today' : 'Due ' + relativeDate(t.due)) + (t.time ? ' at ' + fmtTime(t.time) : ''), tag: t.id }); } catch (e) {} }
-      toast('Reminder: ' + t.title, 'info');
     }
   });
 }
@@ -2342,7 +2317,7 @@ function wire() {
   });
   metaChange('metaPriority', 'priority'); metaChange('metaStatus', 'status');
   metaChange('metaDate', 'due'); metaChange('metaTime', 'time');
-  metaChange('metaReminder', 'reminder'); metaChange('metaRepeat', 'repeat');
+  metaChange('metaRepeat', 'repeat');
   metaChange('metaFolder', 'folderId', (v) => v || null);
 
   /* tags */
@@ -2479,7 +2454,6 @@ function wire() {
     toast('Default folder updated', 'success');
   });
   $('settingName').addEventListener('input', debounce(() => { state.settings.name = $('settingName').value || 'You'; save(); renderSidebar(); renderComments(detailTask ? taskById(detailTask.id) : {}); }, 200));
-  $('enableNotif').addEventListener('click', () => { Notification.requestPermission().then((p) => toast(p === 'granted' ? 'Notifications enabled' : 'Notifications blocked', p === 'granted' ? 'success' : 'error')); });
   $('exportBtn').addEventListener('click', exportData);
   $('importBtn').addEventListener('click', () => $('importFile').click());
   $('importFile').addEventListener('change', (e) => { if (e.target.files[0]) importData(e.target.files[0]); });
@@ -2625,9 +2599,6 @@ function init() {
   syncDirty = localStorage.getItem(DIRTY_KEY) === '1';
   wire();
   applyAll();
-  // reminder loop
-  checkReminders();
-  setInterval(checkReminders, 30000);
   // cloud sync: adopt/migrate on boot, then poll while visible.
   // Hidden tabs skip polling entirely so Neon's compute can auto-suspend
   // (saves free-tier compute hours); we re-sync the moment the tab returns.

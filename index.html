@@ -178,7 +178,7 @@
       <div class="detail-empty" id="detailEmpty">
         <div class="empty-art">📝</div>
         <h2>Select a task</h2>
-        <p>Choose a task to view its notes, subtasks, reminders and activity — or press <kbd>Ctrl</kbd> <kbd>N</kbd> to create one.</p>
+        <p>Choose a task to view its notes, subtasks and activity — or press <kbd>Ctrl</kbd> <kbd>N</kbd> to create one.</p>
       </div>
 
       <div class="detail-content" id="detailContent" hidden>
@@ -223,16 +223,6 @@
             <label class="meta-cell">
               <span class="meta-label">Time</span>
               <input type="time" id="metaTime" class="meta-input" />
-            </label>
-            <label class="meta-cell">
-              <span class="meta-label">Reminder</span>
-              <select id="metaReminder" class="meta-select">
-                <option value="">None</option>
-                <option value="at">At time</option>
-                <option value="10">10 min before</option>
-                <option value="60">1 hour before</option>
-                <option value="1440">1 day before</option>
-              </select>
             </label>
             <label class="meta-cell">
               <span class="meta-label">Repeat</span>
@@ -323,7 +313,7 @@
             <div class="editor" id="editor" contenteditable="true" spellcheck="true" data-placeholder="Start writing… notes auto-save as you type."></div>
           </section>
 
-          <!-- Reminder / activity / comments -->
+          <!-- Activity / comments -->
           <div class="detail-columns">
             <section class="detail-block">
               <div class="block-head"><h3>Activity</h3></div>
@@ -399,10 +389,6 @@
         <div class="setting-row">
           <div><h4>Default folder</h4><p>New tasks with no folder are saved here.</p></div>
           <select id="settingDefaultFolder" class="meta-select" style="max-width:200px"></select>
-        </div>
-        <div class="setting-row">
-          <div><h4>Notifications</h4><p>Reminders &amp; due-task alerts.</p></div>
-          <button class="btn" id="enableNotif">Enable</button>
         </div>
         <div class="setting-row">
           <div><h4>Data</h4><p>Export, import or reset your workspace.</p></div>
