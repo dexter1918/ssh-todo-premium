@@ -162,6 +162,7 @@ const defaultState = () => ({
     view: 'list', sort: 'manual', sortDir: 'asc', group: 'none',
     appName: 'Nimbus', name: 'Salman Haider', current: 'all',
     defaultFolderId: null,
+    dailyBackup: true, weekStart: 'mon',
     filters: {},
   },
 });
@@ -180,6 +181,18 @@ function enforceFolderRule() {
   let changed = false;
   state.tasks.forEach((t) => { if (!t.folderId) { t.folderId = def; changed = true; } });
   return changed;
+}
+
+/* Trash retention: items older than 30 days are silently hard-deleted at
+   boot. Pre-existing trash without a timestamp gets stamped now, so its
+   30-day clock starts today rather than deleting anything retroactively. */
+function purgeOldTrash() {
+  const cutoff = Date.now() - 30 * 86400e3;
+  let changed = false;
+  state.tasks.forEach((t) => { if (t.trashed && !t.trashedAt) { t.trashedAt = Date.now(); changed = true; } });
+  const before = state.tasks.length;
+  state.tasks = state.tasks.filter((t) => !(t.trashed && t.trashedAt < cutoff));
+  return changed || state.tasks.length !== before;
 }
 
 function load() {
@@ -220,6 +233,7 @@ function save() { savePending = true; _saveDebounced(); }
 const VERSION_KEY = 'nimbus.v1.version';
 const DIRTY_KEY = 'nimbus.v1.dirty'; // survives tab close: unpushed edits exist
 const WORKSPACE_ID = 'default';
+const SNAPSHOT_ID = WORKSPACE_ID + ':backup-daily'; // daily safety-net copy
 const NEON_URL = 'https://ep-floral-silence-aq649dvc-pooler.c-8.us-east-1.aws.neon.tech/sql';
 const NEON_CONN = 'postgresql://neondb_owner:npg_4HpuQNDlAg8M@ep-floral-silence-aq649dvc-pooler.c-8.us-east-1.aws.neon.tech/neondb?sslmode=require';
 
@@ -380,6 +394,7 @@ async function syncFromRemote(initial = false) {
       }
     }
     setSyncStatus('synced');
+    if (initial) maybeDailySnapshot(); // fire-and-forget, once per boot
   } catch (e) {
     reportSyncError(e);
   } finally {
@@ -388,6 +403,50 @@ async function syncFromRemote(initial = false) {
       if (syncDirty) schedulePush(); // offline boot: push once we're back
     }
   }
+}
+
+/* ----- daily snapshot: one safety-net copy per day in its own row ----- */
+async function maybeDailySnapshot() {
+  if (!state.settings.dailyBackup) return;
+  try {
+    // the WHERE guard makes this a no-op if today's snapshot already exists
+    await neonQuery(
+      `INSERT INTO workspace (id, data, version) VALUES ($1, $2::jsonb, 1)
+       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, version = workspace.version + 1, updated_at = now()
+       WHERE workspace.updated_at < date_trunc('day', now())`,
+      [SNAPSHOT_ID, JSON.stringify(state)]
+    );
+  } catch (e) { /* snapshots must never disturb the app */ }
+}
+async function restoreSnapshot() {
+  try {
+    const r = await neonQuery('SELECT data, updated_at FROM workspace WHERE id=$1', [SNAPSHOT_ID]);
+    if (!r.rows.length) return toast('No snapshot exists yet', 'info');
+    const when = new Date(String(r.rows[0].updated_at).replace(' ', 'T'));
+    if (!confirm(`Restore the snapshot from ${fmtDateTime(when.getTime())}?
+
+Your current workspace will be replaced (Ctrl+Z can undo the tasks).`)) return;
+    pushHistory();
+    const data = typeof r.rows[0].data === 'string' ? JSON.parse(r.rows[0].data) : r.rows[0].data;
+    state = Object.assign(defaultState(), data);
+    state.settings = Object.assign(defaultState().settings, data.settings);
+    save(); applyAll();
+    toast('Snapshot restored — syncing to cloud', 'success');
+  } catch (e) { toast('Could not restore the snapshot', 'error'); }
+}
+async function fillSnapshotStatus() {
+  const el = $('snapshotStatus'); if (!el) return;
+  el.textContent = '…';
+  try {
+    const r = await neonQuery('SELECT updated_at FROM workspace WHERE id=$1', [SNAPSHOT_ID]);
+    el.textContent = r.rows.length
+      ? 'Last: ' + fmtDateTime(new Date(String(r.rows[0].updated_at).replace(' ', 'T')).getTime())
+      : 'No snapshot yet';
+  } catch (e) { el.textContent = 'Status unavailable'; }
+}
+function renderSettingSegs() {
+  $$('#backupSeg button').forEach((b) => b.classList.toggle('active', (state.settings.dailyBackup ? 'on' : 'off') === b.dataset.backupSet));
+  $$('#weekSeg button').forEach((b) => b.classList.toggle('active', (state.settings.weekStart || 'mon') === b.dataset.weekSet));
 }
 
 function setSyncStatus(s) {
@@ -436,7 +495,7 @@ function seed() {
   state.folders = [fWork, fPersonal, fSide];
 
   const mk = (o) => Object.assign({
-    id: uid(), title: '', description: '', notes: '', subtasks: [], priority: 'none',
+    id: uid(), title: '', notes: '', subtasks: [], priority: 'none',
     tags: [], folderId: null, due: '', time: '', repeat: '',
     starred: false, pinned: false, completed: false, archived: false, trashed: false,
     status: 'todo', isNote: false, order: 0, comments: [], activity: [],
@@ -597,7 +656,8 @@ const folderById = (id) => state.folders.find((f) => f.id === id);
 const taskById = (id) => state.tasks.find((t) => t.id === id);
 function allTags() {
   const m = new Map();
-  state.tasks.forEach((t) => { if (!t.trashed) t.tags.forEach((tg) => m.set(tg, (m.get(tg) || 0) + 1)); });
+  // completed tasks' tags don't clutter the sidebar tag cloud
+  state.tasks.forEach((t) => { if (!t.trashed && !t.completed) t.tags.forEach((tg) => m.set(tg, (m.get(tg) || 0) + 1)); });
   return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
 }
 function tagColor(tag) {
@@ -612,7 +672,11 @@ function progressOf(t) {
 /* ------------------------------------------------------------------ *
  *  3. Mutations
  * ------------------------------------------------------------------ */
-function touch(t) { t.updatedAt = Date.now(); }
+function touch(t) {
+  t.updatedAt = Date.now();
+  // ANY change to the open task refreshes the "Updated …" footer instantly
+  if (detailTask && t.id === detailTask.id) renderDetailFoot(t);
+}
 function logActivity(t, text) {
   (t.activity = t.activity || []).unshift({ ts: Date.now(), text });
   if (t.activity.length > 30) t.activity.length = 30;
@@ -622,7 +686,7 @@ function addTask(props = {}, opts = {}) {
   pushHistory();
   const cur = state.settings.current;
   const base = {
-    id: uid(), title: '', description: '', notes: '', subtasks: [], priority: 'none',
+    id: uid(), title: '', notes: '', subtasks: [], priority: 'none',
     tags: [], folderId: null, due: '', time: '', repeat: '',
     starred: false, pinned: false, completed: false, archived: false, trashed: false,
     status: 'todo', isNote: false, order: -Date.now(), comments: [], activity: [],
@@ -649,7 +713,7 @@ function deleteTask(id, hard = false) {
   const t = taskById(id); if (!t) return;
   pushHistory();
   if (hard || t.trashed) { state.tasks = state.tasks.filter((x) => x.id !== id); }
-  else { t.trashed = true; touch(t); }
+  else { t.trashed = true; t.trashedAt = Date.now(); touch(t); }
   if (ui.selected === id) closeDetail();
   ui.multi.delete(id);
   save();
@@ -816,6 +880,12 @@ function folderPathLabel(fid) {
   while (f && guard++ < 10) { parts.unshift(`${f.icon} ${escapeHtml(f.name)}`); f = folderById(f.parentId); }
   return parts.join(' / ') || '📂 No folder';
 }
+function folderPathTitle(fid) { // plain text for tooltips
+  const parts = [];
+  let f = folderById(fid), guard = 0;
+  while (f && guard++ < 10) { parts.unshift(f.name); f = folderById(f.parentId); }
+  return parts.join(' / ');
+}
 function searchGroups(tasks) {
   // bucket by folder, label with the full nested path
   const buckets = new Map();
@@ -942,7 +1012,7 @@ function taskCardHtml(t, virt) {
   const prog = progressOf(t);
   const stCount = t.subtasks.length;
   const stDone = t.subtasks.filter((s) => s.done).length;
-  const preview = t.isNote ? stripHtml(t.notes) : (t.description || stripHtml(t.notes));
+  const preview = stripHtml(t.notes);
   const today = todayStr();
   let dueCls = '', dueTxt = '';
   if (t.due) {
@@ -953,6 +1023,15 @@ function taskCardHtml(t, virt) {
   const sel = ui.selected === t.id ? ' selected' : '';
   const multi = ui.multi.has(t.id) ? ' multi-selected' : '';
   const titleHtml = ui.search ? highlight(t.title || 'Untitled', ui.search) : escapeHtml(t.title || 'Untitled');
+  // Folder chip only where lists mix folders and nothing else conveys it:
+  // hidden in folder views, when grouping by folder, and in search (grouped).
+  const homeFolder = folderById(t.folderId);
+  const showFolder = homeFolder && !ui.search
+    && !state.settings.current.startsWith('folder:')
+    && state.settings.group !== 'folder';
+  const folderChip = showFolder
+    ? `<span class="task-tag folder-chip" title="${escapeHtml(folderPathTitle(t.folderId))}"><span class="tdot" style="background:${homeFolder.color}"></span>${homeFolder.icon} ${escapeHtml(homeFolder.name)}</span>`
+    : '';
   return `<div class="task-card prio-${t.priority}${t.completed ? ' completed' : ''}${t.pinned ? ' pinned' : ''}${sel}${multi}"
       data-id="${t.id}" draggable="true" role="listitem">
     <div class="task-check${t.completed ? ' checked' : ''}" data-check="${t.id}" title="Complete"></div>
@@ -965,6 +1044,7 @@ function taskCardHtml(t, virt) {
       ${preview ? `<div class="task-preview">${escapeHtml(preview).slice(0, 120)}</div>` : ''}
       <div class="task-meta">
         ${dueTxt ? `<span class="task-badge${dueCls}">📅 ${dueTxt}</span>` : ''}
+        ${folderChip}
         ${stCount ? `<span class="task-progress-mini">☑ ${stDone}/${stCount}<span class="mini-bar"><i style="width:${prog}%"></i></span></span>` : ''}
         ${t.tags.slice(0, 3).map((tg) => `<span class="task-tag"><span class="tdot" style="background:${tagColor(tg)}"></span>${escapeHtml(tg)}</span>`).join('')}
       </div>
@@ -1014,7 +1094,8 @@ function renderCalendar() {
   const ref = ui.cal;
   const year = ref.getFullYear(), month = ref.getMonth();
   const first = new Date(year, month, 1);
-  const startDay = first.getDay();
+  const weekStartMon = (state.settings.weekStart || 'mon') !== 'sun';
+  const startDay = weekStartMon ? (first.getDay() + 6) % 7 : first.getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const monthName = first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
   const today = todayStr();
@@ -1022,7 +1103,7 @@ function renderCalendar() {
   const byDate = {};
   visibleBase().filter((t) => t.due && !t.archived).forEach((t) => { (byDate[t.due] = byDate[t.due] || []).push(t); });
 
-  const dows = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const dows = weekStartMon ? ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   let cells = '';
   const totalCells = Math.ceil((startDay + daysInMonth) / 7) * 7;
   for (let i = 0; i < totalCells; i++) {
@@ -1321,7 +1402,12 @@ function renderDetail() {
   renderActivity(t);
   renderComments(t);
 
-  $('detailFoot').innerHTML = `<span>Created ${new Date(t.createdAt).toLocaleString()}</span><span>Updated ${timeAgo(t.updatedAt)}</span><span>ID ${t.id.slice(0, 6)}</span>`;
+  renderDetailFoot(t);
+}
+
+function renderDetailFoot(t) {
+  const el = $('detailFoot'); if (!el) return;
+  el.innerHTML = `<span>Created ${new Date(t.createdAt).toLocaleString()}</span><span>Updated ${timeAgo(t.updatedAt)}</span><span>ID ${t.id.slice(0, 6)}</span>`;
 }
 
 function renderTagEditor(t) {
@@ -1708,7 +1794,9 @@ function showContextMenu(x, y, items) {
   menu.style.left = clamp(x, 6, window.innerWidth - w - 6) + 'px';
   menu.style.top = clamp(y, 6, window.innerHeight - h - 6) + 'px';
   menu._items = items;
+  ctxIndex = -1; // keyboard cursor resets for each menu
 }
+let ctxIndex = -1;
 function hideContextMenu() { $('contextMenu').hidden = true; }
 
 function taskContextItems(t) {
@@ -1738,7 +1826,7 @@ function runTaskCtx(action, t) {
     case 'duplicate': duplicateTask(t.id); break;
     case 'archive': pushHistory(); t.archived = !t.archived; logActivity(t, t.archived ? 'Archived' : 'Unarchived'); touch(t); save(); renderAll(); toast(t.archived ? 'Archived' : 'Unarchived', 'info'); break;
     case 'delete': removeWithUndo(t.id); break;
-    case 'restore': pushHistory(); t.trashed = false; touch(t); save(); renderAll(); toast('Restored', 'success'); break;
+    case 'restore': pushHistory(); t.trashed = false; delete t.trashedAt; touch(t); save(); renderAll(); toast('Restored', 'success'); break;
     case 'prio-high': case 'prio-medium': case 'prio-low': case 'prio-none':
       pushHistory(); t.priority = action.slice(5); touch(t); save(); renderAll(); break;
   }
@@ -1750,7 +1838,7 @@ function removeWithUndo(id) {
   deleteTask(id);
   renderAll();
   toast(wasTrashed ? 'Task permanently deleted' : 'Task moved to Trash', 'info',
-    { label: 'Undo', fn: () => { const tk = taskById(id); if (tk) { tk.trashed = false; } else { state.tasks.unshift(snap); } save(); renderAll(); } });
+    { label: 'Undo', fn: () => { const tk = taskById(id); if (tk) { tk.trashed = false; delete tk.trashedAt; } else { state.tasks.unshift(snap); } save(); renderAll(); } });
 }
 
 /* ------------------------------------------------------------------ *
@@ -1758,6 +1846,7 @@ function removeWithUndo(id) {
  * ------------------------------------------------------------------ */
 const paletteState = { active: 0, items: [] };
 function openPalette() {
+  lastFocusedEl = document.activeElement;
   $('paletteOverlay').hidden = false;
   $('paletteInput').value = ''; $('paletteInput').focus();
   buildPalette('');
@@ -2029,8 +2118,18 @@ function setupDnD() {
 /* ------------------------------------------------------------------ *
  *  21. Settings / data import-export
  * ------------------------------------------------------------------ */
-function openModal(id) { $(id).hidden = false; }
-function closeOverlay(el) { el.classList.add('closing'); setTimeout(() => { el.hidden = true; el.classList.remove('closing'); }, 200); }
+let lastFocusedEl = null;
+function openModal(id) {
+  lastFocusedEl = document.activeElement;
+  const o = $(id); o.hidden = false;
+  if (id === 'settingsOverlay') { renderSettingSegs(); fillSnapshotStatus(); }
+  const f = o.querySelector('button, input, select'); if (f) f.focus();
+}
+function closeOverlay(el) {
+  el.classList.add('closing');
+  setTimeout(() => { el.hidden = true; el.classList.remove('closing'); }, 200);
+  if (lastFocusedEl) { try { lastFocusedEl.focus(); } catch (e) {} lastFocusedEl = null; }
+}
 function exportData() {
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -2216,7 +2315,7 @@ function wire() {
       }
       else if (act === 'star') t.starred = true;
       else if (act === 'archive') t.archived = true;
-      else if (act === 'delete') t.trashed = true;
+      else if (act === 'delete') { t.trashed = true; t.trashedAt = Date.now(); }
       touch(t);
     });
     // close the detail pane if the task it shows was just trashed
@@ -2356,38 +2455,55 @@ function wire() {
     if (s) { s.text = span.textContent; touch(t); save(); }
   }, 300));
 
-  /* subtask drag-reorder — draggable only while gripping the ⋮⋮ handle so
-     text selection/editing inside subtasks is never hijacked */
+  /* subtask drag-reorder — pointer-based (no HTML5 DnD): a floating clone
+     follows the cursor while the other rows glide aside via FLIP, giving a
+     smooth 60fps feel. Drag starts ONLY from the ⋮⋮ grip, so text selection
+     and inline editing inside subtasks are never hijacked. */
   const stList = $('subtaskList');
-  let subDragId = null;
-  stList.addEventListener('mousedown', (e) => {
-    const grip = e.target.closest('.st-grip');
-    if (grip) grip.closest('.subtask-item').draggable = true;
-  });
-  stList.addEventListener('dragstart', (e) => {
-    const li = e.target.closest('.subtask-item');
-    if (!li || !li.draggable) return;
-    e.stopPropagation(); // keep the global task-card DnD out of this
-    subDragId = li.dataset.sid;
-    li.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-    try { e.dataTransfer.setData('text/plain', 'subtask:' + subDragId); } catch (_) {}
-  });
-  stList.addEventListener('dragover', (e) => {
-    if (!subDragId) return;
-    e.preventDefault(); e.stopPropagation();
-    const over = e.target.closest('.subtask-item');
-    const dragEl = stList.querySelector('.subtask-item.dragging');
-    if (!over || !dragEl || over === dragEl) return;
-    const r = over.getBoundingClientRect();
-    stList.insertBefore(dragEl, e.clientY < r.top + r.height / 2 ? over : over.nextSibling);
-  });
-  stList.addEventListener('drop', (e) => { if (subDragId) { e.preventDefault(); e.stopPropagation(); } });
-  stList.addEventListener('dragend', (e) => {
-    const li = e.target.closest('.subtask-item');
-    if (li) { li.draggable = false; li.classList.remove('dragging'); }
-    if (!subDragId || !detailTask) { subDragId = null; return; }
-    subDragId = null;
+  let stDrag = null;
+  const stFlip = (mutate) => {
+    const items = [...stList.querySelectorAll('.subtask-item')].filter((el) => el !== stDrag.li);
+    const before = new Map(items.map((el) => [el, el.getBoundingClientRect().top]));
+    mutate();
+    items.forEach((el) => {
+      const d = before.get(el) - el.getBoundingClientRect().top;
+      if (d) {
+        el.style.transition = 'none';
+        el.style.transform = `translateY(${d}px)`;
+        requestAnimationFrame(() => { el.style.transition = 'transform 160ms ease'; el.style.transform = ''; });
+      }
+    });
+  };
+  const stDragMove = (e) => {
+    if (!stDrag) return;
+    if (!stDrag.started) {
+      if (Math.abs(e.clientY - stDrag.startY) < 4) return; // dead zone: a click isn't a drag
+      stDrag.started = true;
+      const r = stDrag.li.getBoundingClientRect();
+      const g = stDrag.li.cloneNode(true);
+      g.className = 'subtask-item st-ghost';
+      g.style.width = r.width + 'px';
+      g.style.left = r.left + 'px';
+      document.body.appendChild(g);
+      stDrag.ghost = g;
+      stDrag.li.classList.add('st-placeholder');
+      document.body.classList.add('st-grabbing');
+    }
+    stDrag.ghost.style.top = (e.clientY - stDrag.offsetY) + 'px';
+    const sibs = [...stList.querySelectorAll('.subtask-item')].filter((el) => el !== stDrag.li);
+    let target = null;
+    for (const s of sibs) { const r = s.getBoundingClientRect(); if (e.clientY < r.top + r.height / 2) { target = s; break; } }
+    if (target !== stDrag.li.nextElementSibling) stFlip(() => stList.insertBefore(stDrag.li, target));
+  };
+  const stDragEnd = () => {
+    document.removeEventListener('mousemove', stDragMove);
+    document.removeEventListener('mouseup', stDragEnd);
+    const d = stDrag; stDrag = null;
+    if (!d) return;
+    document.body.classList.remove('st-grabbing');
+    if (d.ghost) d.ghost.remove();
+    d.li.classList.remove('st-placeholder');
+    if (!d.started || !detailTask) return;
     const t = taskById(detailTask.id); if (!t) return;
     const domOrder = [...stList.querySelectorAll('.subtask-item')].map((el) => el.dataset.sid);
     if (domOrder.join() !== t.subtasks.map((s) => s.id).join()) {
@@ -2396,6 +2512,15 @@ function wire() {
       touch(t); save();
       renderSubtasks(t);
     }
+  };
+  stList.addEventListener('mousedown', (e) => {
+    const grip = e.target.closest('.st-grip');
+    if (!grip || e.button !== 0) return;
+    e.preventDefault();
+    const li = grip.closest('.subtask-item');
+    stDrag = { li, startY: e.clientY, offsetY: e.clientY - li.getBoundingClientRect().top, started: false, ghost: null };
+    document.addEventListener('mousemove', stDragMove);
+    document.addEventListener('mouseup', stDragEnd);
   });
 
   /* editor */
@@ -2445,6 +2570,34 @@ function wire() {
   $$('.overlay').forEach((o) => o.addEventListener('click', (e) => { if (e.target === o) closeOverlay(o); }));
 
   $('themeSeg').addEventListener('click', (e) => { const b = e.target.closest('[data-theme-set]'); if (b) setTheme(b.dataset.themeSet); });
+  $('backupSeg').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-backup-set]'); if (!b) return;
+    state.settings.dailyBackup = b.dataset.backupSet === 'on';
+    save(); renderSettingSegs();
+    if (state.settings.dailyBackup) maybeDailySnapshot().then(fillSnapshotStatus);
+    toast(state.settings.dailyBackup ? 'Daily snapshot on' : 'Daily snapshot off', 'info');
+  });
+  $('weekSeg').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-week-set]'); if (!b) return;
+    state.settings.weekStart = b.dataset.weekSet;
+    save(); renderSettingSegs();
+    if (state.settings.view === 'calendar') renderCalendar();
+  });
+  $('restoreSnapshotBtn').addEventListener('click', restoreSnapshot);
+  $('syncChip').addEventListener('click', () => {
+    setSyncStatus('syncing');
+    if (syncDirty || savePending) pushToRemote(); else syncFromRemote();
+  });
+  // keep keyboard focus inside open modal dialogs
+  const trapFocus = (overlay) => overlay.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab') return;
+    const f = [...overlay.querySelectorAll('button, [href], input, select, textarea')].filter((el) => el.offsetParent !== null);
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+  $$('.overlay').forEach(trapFocus);
   $('accentRow').addEventListener('click', (e) => { const d = e.target.closest('[data-accent]'); if (d) { state.settings.accent = d.dataset.accent; const a = ACCENTS.find((x) => x.hex === d.dataset.accent); state.settings.accentRgb = a.rgb; save(); applyAccent(); if (state.settings.view === 'dashboard') renderDashboard(); } });
   $('settingAppName').addEventListener('input', debounce(() => { state.settings.appName = $('settingAppName').value.trim(); save(); applyBranding(); }, 150));
   $('settingDefaultFolder').addEventListener('change', () => {
@@ -2523,7 +2676,12 @@ function onKeydown(e) {
 
   // Ctrl+K — palette (always)
   if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); $('paletteOverlay').hidden ? openPalette() : closePalette(); return; }
-  if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); $('searchInput').focus(); $('searchInput').select(); return; }
+  if (mod && e.key.toLowerCase() === 'f') {
+    e.preventDefault();
+    if (state.settings.sidebarCollapsed) { state.settings.sidebarCollapsed = false; save(); applySidebar(); }
+    $('searchInput').focus(); $('searchInput').select();
+    return;
+  }
   if (mod && e.key.toLowerCase() === 'n') { e.preventDefault(); newTask(); return; }
   if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { if (typing) return; e.preventDefault(); undo(); return; }
   if (mod && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) { if (typing) return; e.preventDefault(); redo(); return; }
@@ -2539,6 +2697,18 @@ function onKeydown(e) {
     if (!$('popover').hidden) return hidePopover();
     if (ui.multi.size) { ui.multi.clear(); renderAll(); return; }
     if (ui.selected) return closeDetail();
+    return;
+  }
+
+  // arrow-key navigation inside an open context menu
+  if (!$('contextMenu').hidden && ['ArrowDown', 'ArrowUp', 'Enter'].includes(e.key)) {
+    e.preventDefault();
+    const items = [...$('contextMenu').querySelectorAll('.ctx-item')];
+    if (!items.length) return;
+    if (e.key === 'Enter') { if (ctxIndex >= 0) items[ctxIndex].click(); return; }
+    ctxIndex = e.key === 'ArrowDown' ? (ctxIndex + 1) % items.length : (ctxIndex - 1 + items.length) % items.length;
+    items.forEach((el, i) => el.classList.toggle('kbd-active', i === ctxIndex));
+    items[ctxIndex].scrollIntoView({ block: 'nearest' });
     return;
   }
 
@@ -2566,6 +2736,7 @@ function buildStatics() {
   $('accentRow').innerHTML = ACCENTS.map((a) => `<span class="accent-dot" data-accent="${a.hex}" style="background:${a.hex}" title="${a.name}"></span>`).join('');
   $('settingName').value = state.settings.name;
   $('settingAppName').value = state.settings.appName || '';
+  renderSettingSegs();
   // shortcuts
   const sc = [
     ['New Task', ['Ctrl', 'N']], ['Search', ['Ctrl', 'F']], ['Command Palette', ['Ctrl', 'K']],
@@ -2593,12 +2764,16 @@ function applyAll() {
 function init() {
   load();
   remoteVersion = +(localStorage.getItem(VERSION_KEY) || 0);
-  if (enforceFolderRule()) save(); // one-time migration of folderless tasks
+  const migratedFolders = enforceFolderRule(); // one-time folderless migration
+  const purgedTrash = purgeOldTrash();         // 30-day trash retention
+  if (migratedFolders || purgedTrash) save();
   // A previous session ended with edits that never reached Neon — treat
   // them as pending so the boot sync pushes instead of adopting over them.
   syncDirty = localStorage.getItem(DIRTY_KEY) === '1';
   wire();
   applyAll();
+  // keep the "Updated … ago" footer fresh while a task is open
+  setInterval(() => { if (detailTask) { const t = taskById(detailTask.id); if (t) renderDetailFoot(t); } }, 30000);
   // cloud sync: adopt/migrate on boot, then poll while visible.
   // Hidden tabs skip polling entirely so Neon's compute can auto-suspend
   // (saves free-tier compute hours); we re-sync the moment the tab returns.
@@ -2634,7 +2809,8 @@ function init() {
   window.addEventListener('resize', debounce(() => { if (state.settings.view === 'dashboard') renderDashboard(); }, 250));
   // expose for debugging (getter: `state` is reassigned by import/reset)
   window.Nimbus = { get state() { return state; }, save, renderAll,
-    _sync: { push: pushToRemote, pull: syncFromRemote, query: neonQuery, status: () => ({ remoteVersion, syncDirty, syncReady, savePending, inFlight: syncInFlight }), _setVer: (v) => { remoteVersion = v; } } };
+    _sync: { push: pushToRemote, pull: syncFromRemote, query: neonQuery, status: () => ({ remoteVersion, syncDirty, syncReady, savePending, inFlight: syncInFlight }), _setVer: (v) => { remoteVersion = v; } },
+    _maint: { purge: purgeOldTrash, snapshot: maybeDailySnapshot, restore: restoreSnapshot } };
   console.log('%cNimbus ready ☁️', 'color:#6366f1;font-weight:700;font-size:14px');
 }
 

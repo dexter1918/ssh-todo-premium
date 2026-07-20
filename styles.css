@@ -265,7 +265,9 @@ h1, h2, h3, h4 { margin: 0; font-weight: 700; letter-spacing: -0.01em; }
 .mini-stat span { font-size: 11px; color: var(--text-3); }
 
 .sidebar-footer { display: flex; align-items: center; gap: 8px; padding: 10px 4px 2px; border-top: 1px solid var(--hairline); margin-top: 6px; flex-shrink: 0; }
-.sync-chip { display: flex; align-items: center; gap: 6px; padding: 0 6px; font-size: 11px; font-weight: 600; color: var(--text-3); white-space: nowrap; flex: 0 0 auto; }
+.sync-chip { display: flex; align-items: center; gap: 6px; padding: 0 6px; font-size: 11px; font-weight: 600; color: var(--text-3); white-space: nowrap; flex: 0 0 auto; cursor: pointer; }
+.sync-chip:hover .sync-label { color: var(--text); text-decoration: underline; }
+.ctx-item.kbd-active { background: var(--hover); }
 .sync-chip .sync-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); flex: 0 0 auto; }
 .sync-chip.synced .sync-dot { background: #22c55e; }
 .sync-chip.syncing .sync-dot { background: #f59e0b; animation: syncPulse 1s ease-in-out infinite; }
@@ -543,7 +545,14 @@ select option, select optgroup {
 .subtask-list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .subtask-item { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 10px; transition: background 0.16s; animation: slideDown 0.25s var(--ease); }
 .subtask-item:hover { background: var(--hover); }
-.subtask-item.dragging { opacity: 0.45; background: var(--accent-soft); }
+.st-ghost {
+  position: fixed; z-index: 9999; pointer-events: none; margin: 0;
+  background: var(--surface-solid); border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-lg); border-radius: 10px;
+  transform: scale(1.02) rotate(-0.5deg); opacity: 0.97;
+}
+.st-placeholder { opacity: 0.35; background: var(--accent-soft); }
+body.st-grabbing { cursor: grabbing !important; user-select: none; }
 .st-grip {
   flex: 0 0 auto; cursor: grab; color: var(--text-3); font-size: 12px; letter-spacing: -2px;
   opacity: 0; transition: opacity 0.16s; user-select: none; padding: 0 2px;
