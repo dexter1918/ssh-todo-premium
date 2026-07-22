@@ -162,7 +162,6 @@ const defaultState = () => ({
     view: 'list', sort: 'manual', sortDir: 'asc', group: 'none',
     appName: 'Nimbus', name: 'Salman Haider', current: 'all',
     defaultFolderId: null,
-    dailyBackup: true, weekStart: 'mon',
     filters: {},
   },
 });
@@ -407,7 +406,6 @@ async function syncFromRemote(initial = false) {
 
 /* ----- daily snapshot: one safety-net copy per day in its own row ----- */
 async function maybeDailySnapshot() {
-  if (!state.settings.dailyBackup) return;
   try {
     // the WHERE guard makes this a no-op if today's snapshot already exists
     await neonQuery(
@@ -434,21 +432,6 @@ Your current workspace will be replaced (Ctrl+Z can undo the tasks).`)) return;
     toast('Snapshot restored — syncing to cloud', 'success');
   } catch (e) { toast('Could not restore the snapshot', 'error'); }
 }
-async function fillSnapshotStatus() {
-  const el = $('snapshotStatus'); if (!el) return;
-  el.textContent = '…';
-  try {
-    const r = await neonQuery('SELECT updated_at FROM workspace WHERE id=$1', [SNAPSHOT_ID]);
-    el.textContent = r.rows.length
-      ? 'Last: ' + fmtDateTime(new Date(String(r.rows[0].updated_at).replace(' ', 'T')).getTime())
-      : 'No snapshot yet';
-  } catch (e) { el.textContent = 'Status unavailable'; }
-}
-function renderSettingSegs() {
-  $$('#backupSeg button').forEach((b) => b.classList.toggle('active', (state.settings.dailyBackup ? 'on' : 'off') === b.dataset.backupSet));
-  $$('#weekSeg button').forEach((b) => b.classList.toggle('active', (state.settings.weekStart || 'mon') === b.dataset.weekSet));
-}
-
 function setSyncStatus(s) {
   const chip = $('syncChip'); if (!chip) return;
   const map = {
@@ -1094,8 +1077,7 @@ function renderCalendar() {
   const ref = ui.cal;
   const year = ref.getFullYear(), month = ref.getMonth();
   const first = new Date(year, month, 1);
-  const weekStartMon = (state.settings.weekStart || 'mon') !== 'sun';
-  const startDay = weekStartMon ? (first.getDay() + 6) % 7 : first.getDay();
+  const startDay = first.getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const monthName = first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
   const today = todayStr();
@@ -1103,7 +1085,7 @@ function renderCalendar() {
   const byDate = {};
   visibleBase().filter((t) => t.due && !t.archived).forEach((t) => { (byDate[t.due] = byDate[t.due] || []).push(t); });
 
-  const dows = weekStartMon ? ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const dows = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   let cells = '';
   const totalCells = Math.ceil((startDay + daysInMonth) / 7) * 7;
   for (let i = 0; i < totalCells; i++) {
@@ -2122,7 +2104,6 @@ let lastFocusedEl = null;
 function openModal(id) {
   lastFocusedEl = document.activeElement;
   const o = $(id); o.hidden = false;
-  if (id === 'settingsOverlay') { renderSettingSegs(); fillSnapshotStatus(); }
   const f = o.querySelector('button, input, select'); if (f) f.focus();
 }
 function closeOverlay(el) {
@@ -2570,20 +2551,6 @@ function wire() {
   $$('.overlay').forEach((o) => o.addEventListener('click', (e) => { if (e.target === o) closeOverlay(o); }));
 
   $('themeSeg').addEventListener('click', (e) => { const b = e.target.closest('[data-theme-set]'); if (b) setTheme(b.dataset.themeSet); });
-  $('backupSeg').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-backup-set]'); if (!b) return;
-    state.settings.dailyBackup = b.dataset.backupSet === 'on';
-    save(); renderSettingSegs();
-    if (state.settings.dailyBackup) maybeDailySnapshot().then(fillSnapshotStatus);
-    toast(state.settings.dailyBackup ? 'Daily snapshot on' : 'Daily snapshot off', 'info');
-  });
-  $('weekSeg').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-week-set]'); if (!b) return;
-    state.settings.weekStart = b.dataset.weekSet;
-    save(); renderSettingSegs();
-    if (state.settings.view === 'calendar') renderCalendar();
-  });
-  $('restoreSnapshotBtn').addEventListener('click', restoreSnapshot);
   $('syncChip').addEventListener('click', () => {
     setSyncStatus('syncing');
     if (syncDirty || savePending) pushToRemote(); else syncFromRemote();
@@ -2736,7 +2703,6 @@ function buildStatics() {
   $('accentRow').innerHTML = ACCENTS.map((a) => `<span class="accent-dot" data-accent="${a.hex}" style="background:${a.hex}" title="${a.name}"></span>`).join('');
   $('settingName').value = state.settings.name;
   $('settingAppName').value = state.settings.appName || '';
-  renderSettingSegs();
   // shortcuts
   const sc = [
     ['New Task', ['Ctrl', 'N']], ['Search', ['Ctrl', 'F']], ['Command Palette', ['Ctrl', 'K']],

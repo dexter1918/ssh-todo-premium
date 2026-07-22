@@ -238,13 +238,15 @@
               <span class="meta-label">Folder</span>
               <select id="metaFolder" class="meta-select"></select>
             </label>
-            <div class="meta-cell">
-              <span class="meta-label">Tags</span>
-              <div class="tag-edit" id="metaTags">
-                <input type="text" id="tagInput" class="tag-input" placeholder="Add tag…" />
-              </div>
-            </div>
           </div>
+
+          <!-- Tags -->
+          <section class="detail-block">
+            <div class="block-head"><h3>Tags</h3></div>
+            <div class="tag-edit" id="metaTags">
+              <input type="text" id="tagInput" class="tag-input" placeholder="Add tag…" />
+            </div>
+          </section>
 
           <!-- Subtasks -->
           <section class="detail-block">
@@ -389,24 +391,6 @@
         <div class="setting-row">
           <div><h4>Default folder</h4><p>New tasks with no folder are saved here.</p></div>
           <select id="settingDefaultFolder" class="meta-select" style="max-width:200px"></select>
-        </div>
-        <div class="setting-row">
-          <div><h4>Daily snapshot</h4><p>Keeps one daily copy of your workspace in Neon as a safety net.</p></div>
-          <div class="btn-group">
-            <span class="autosave-pill" id="snapshotStatus">—</span>
-            <div class="seg" id="backupSeg">
-              <button data-backup-set="on">On</button>
-              <button data-backup-set="off">Off</button>
-            </div>
-            <button class="btn" id="restoreSnapshotBtn">Restore…</button>
-          </div>
-        </div>
-        <div class="setting-row">
-          <div><h4>Week starts on</h4><p>First day of the calendar week.</p></div>
-          <div class="seg" id="weekSeg">
-            <button data-week-set="mon">Monday</button>
-            <button data-week-set="sun">Sunday</button>
-          </div>
         </div>
         <div class="setting-row">
           <div><h4>Data</h4><p>Export, import or reset your workspace.</p></div>
